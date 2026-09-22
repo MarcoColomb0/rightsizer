@@ -11,6 +11,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 . "$HERE/flatcar.env"
 WORK="${WORK:-$(mktemp -d)}"
+mkdir -p "$WORK"
 PW='ci & admin password'
 PORT=2222
 cleanup() {
