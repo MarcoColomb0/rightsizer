@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+# rightsizer appliance host helper. Runs as root from systemd units only.
+set -euo pipefail
+umask 077
+
+REGISTRY=ghcr.io/marcocolomb0/rightsizer
+ENV_FILE=/etc/rightsizer/engine.env
+STATE=/var/lib/rightsizer
+DATA=$STATE/data
+BACKUPS=$STATE/backups
+UID_ENGINE=65532
+C=rightsizer
+
+log() { echo "rightsizer-host: $*" >&2; }
+
+ovfenv() {
+	if [ -r /etc/rightsizer/ovfenv.xml ]; then
+		cat /etc/rightsizer/ovfenv.xml
+		return
+	fi
+	local t
+	for t in /usr/share/oem/bin/vmtoolsd /oem/bin/vmtoolsd vmtoolsd; do
+		if command -v "$t" >/dev/null 2>&1; then
+			"$t" --cmd 'info-get guestinfo.ovfEnv' 2>/dev/null && return
+		fi
+	done
+	for t in /usr/share/oem/bin/vmware-rpctool /oem/bin/vmware-rpctool vmware-rpctool; do
+		if command -v "$t" >/dev/null 2>&1; then
+			"$t" 'info-get guestinfo.ovfEnv' 2>/dev/null && return
+		fi
+	done
+}
+
+OVF=""
+prop() {
+	[ -n "$OVF" ] || OVF="$(ovfenv || true)"
+	grep -o "oe:key=\"guestinfo.$1\" oe:value=\"[^\"]*\"" <<<"$OVF" | head -n1 |
+		sed -e 's/.*oe:value="//' -e 's/"$//' \
+			-e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g' || true
+}
+
+valid() { [[ "$2" =~ $1 ]]; }
+IP='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+CIDR='^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$'
+NAME='^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'
+
+network() {
+	local host ip gw dns domain ntp tz f=/etc/systemd/network/00-rightsizer.network
+	host="$(prop hostname)"
+	ip="$(prop rightsizer.ip)"
+	gw="$(prop rightsizer.gateway)"
+	dns="$(prop rightsizer.dns | tr ',;' '  ')"
+	domain="$(prop rightsizer.domain)"
+	ntp="$(prop rightsizer.ntp | tr ',;' '  ')"
+	tz="$(prop rightsizer.timezone)"
+
+	if [ -n "$host" ] && valid "$NAME" "$host"; then
+		printf '%s\n' "$host" >/etc/hostname
+		chmod 0644 /etc/hostname
+		hostname "$host"
+	fi
+	{
+		echo "[Match]"
+		echo "Name=en* eth*"
+		echo "[Network]"
+		echo "LinkLocalAddressing=no"
+		echo "IPv6AcceptRA=no"
+		if [ -n "$ip" ] && valid "$CIDR" "$ip"; then
+			echo "DHCP=no"
+			echo "Address=$ip"
+			if valid "$IP" "$gw"; then echo "Gateway=$gw"; fi
+		else
+			[ -z "$ip" ] || log "ignoring invalid IP address '$ip', using DHCP"
+			echo "DHCP=ipv4"
+		fi
+		for d in $dns; do
+			if valid "$IP" "$d"; then echo "DNS=$d"; fi
+		done
+		if [ -n "$domain" ] && valid "$NAME" "$domain"; then echo "Domains=$domain"; fi
+	} >"$f.tmp"
+	chmod 0644 "$f.tmp"
+	mv "$f.tmp" "$f"
+
+	local servers=""
+	for s in $ntp; do
+		if valid "$NAME" "$s" || valid "$IP" "$s"; then servers="$servers $s"; fi
+	done
+	mkdir -p /etc/systemd/timesyncd.conf.d
+	if [ -n "$servers" ]; then
+		printf '[Time]\nNTP=%s\n' "${servers# }" >/etc/systemd/timesyncd.conf.d/rightsizer.conf
+	else
+		rm -f /etc/systemd/timesyncd.conf.d/rightsizer.conf
+	fi
+	chmod 0644 /etc/systemd/timesyncd.conf.d/rightsizer.conf 2>/dev/null || true
+
+	if [ -n "$tz" ] && valid '^[A-Za-z0-9/_+-]+$' "$tz" && [ -e "/usr/share/zoneinfo/$tz" ]; then
+		ln -sfn "../usr/share/zoneinfo/$tz" /etc/localtime
+	fi
+}
+
+# admin_password applies the vApp password on first boot, and again only when
+# it is changed in vCenter (a reset: stored vCenter credentials are cleared).
+admin_password() {
+	local pw key seen
+	pw="$(prop rightsizer.admin_password)"
+	[ -n "$pw" ] || return 0
+	[ -s "$STATE/key" ] || head -c 32 /dev/urandom | base64 >"$STATE/key"
+	key="$(cat "$STATE/key")"
+	seen="$(printf '%s:%s' "$key" "$pw" | sha256sum | cut -d' ' -f1)"
+	if [ "$(cat "$STATE/admin-password.applied" 2>/dev/null)" = "$seen" ]; then
+		return 0
+	fi
+	install -d -m 0700 -o "$UID_ENGINE" -g "$UID_ENGINE" "$DATA/bootstrap"
+	printf '%s\n' "$pw" >"$DATA/bootstrap/admin-password"
+	chown "$UID_ENGINE:$UID_ENGINE" "$DATA/bootstrap/admin-password"
+	chmod 0600 "$DATA/bootstrap/admin-password"
+	echo "$seen" >"$STATE/admin-password.applied"
+	log "administrator password from vApp options will be applied"
+}
+
+image() {
+	# shellcheck disable=SC1090
+	. "$ENV_FILE"
+	echo "$IMAGE"
+}
+
+load_bundle() {
+	local img mnt=/run/rightsizer-bundle
+	img="$(image)"
+	docker image inspect "$img" >/dev/null 2>&1 && return 0
+	if [ -e /dev/disk/by-label/RSBUNDLE ]; then
+		mkdir -p "$mnt"
+		mount -o ro,nodev,nosuid,noexec /dev/disk/by-label/RSBUNDLE "$mnt"
+		docker load -i "$mnt/rightsizer-image.tar.gz" >/dev/null || true
+		umount "$mnt"
+	fi
+	docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
+}
+
+install_console() {
+	local img tmp
+	img="$(image)"
+	tmp="$(docker create "$img" console)"
+	install -d -m 0755 /opt/rightsizer/bin
+	docker cp "$tmp:/rightsizer" /opt/rightsizer/bin/rightsizer.new
+	docker rm "$tmp" >/dev/null
+	chmod 0755 /opt/rightsizer/bin/rightsizer.new
+	mv /opt/rightsizer/bin/rightsizer.new /opt/rightsizer/bin/rightsizer
+}
+
+prepare() {
+	install -d -m 0700 "$STATE" "$BACKUPS"
+	install -d -m 0700 -o "$UID_ENGINE" -g "$UID_ENGINE" "$DATA" "$DATA/host"
+	chown "$UID_ENGINE:$UID_ENGINE" "$BACKUPS"
+	admin_password
+	load_bundle
+	install_console
+}
+
+public_ip() {
+	ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}'
+}
+
+engine() {
+	local img check
+	img="$(image)"
+	case "$(prop rightsizer.update_check)" in
+	False | false) check=false ;;
+	*) check=true ;;
+	esac
+	docker rm -f "$C" >/dev/null 2>&1 || true
+	exec docker run --rm --name "$C" \
+		--read-only \
+		--cap-drop ALL \
+		--security-opt no-new-privileges:true \
+		--pids-limit 256 \
+		--memory 1536m \
+		--tmpfs /tmp:rw,noexec,nosuid,size=16m \
+		-p 22:2222 -p 443:8443 \
+		-e RIGHTSIZER_APPLIANCE=1 \
+		-e RIGHTSIZER_PUBLIC_HOST="$(public_ip)" \
+		-e RIGHTSIZER_PUBLIC_PORT=443 \
+		-e RIGHTSIZER_UPDATE_CHECK="$check" \
+		-e TZ="$(readlink /etc/localtime 2>/dev/null | sed -n 's|.*zoneinfo/||p' | grep -E '^[A-Za-z0-9/_+-]+$' || echo UTC)" \
+		-v "$DATA":/data \
+		"$img" daemon
+}
+
+status() {
+	local tmp="$DATA/host/.upgrade-status.json"
+	printf '{"Version":"%s","State":"%s","Message":"%s","Time":"%s"}\n' "$1" "$2" "${3:-}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp"
+	chown "$UID_ENGINE:$UID_ENGINE" "$tmp"
+	mv "$tmp" "$DATA/host/upgrade-status.json"
+}
+
+count() { docker exec "$C" /rightsizer status 2>/dev/null | awk 'NR == 1 && $1 == "sources:" {print $2}'; }
+
+ready() {
+	for _ in $(seq 1 90); do
+		docker exec "$C" /rightsizer status >/dev/null 2>&1 && return 0
+		sleep 1
+	done
+	return 1
+}
+
+upgrade() {
+	local req="$DATA/host/upgrade-request" tag old new before after file
+	[ -f "$req" ] || return 0
+	tag="$(head -c 32 "$req" | tr -d '\n')"
+	rm -f "$req"
+	if ! valid '^v[0-9]+\.[0-9]+\.[0-9]+$' "$tag"; then
+		log "ignoring invalid upgrade request"
+		return 0
+	fi
+	old="$(image)"
+	new="$REGISTRY:${tag#v}"
+	[ "$old" != "$new" ] || return 0
+	log "upgrading $old -> $new"
+
+	status "$tag" "downloading"
+	if ! docker pull -q "$new" >/dev/null; then
+		status "$tag" "failed" "download failed, nothing changed"
+		return 0
+	fi
+	before="$(count || true)"
+
+	status "$tag" "backing up"
+	systemctl stop rightsizer.service
+	file="rightsizer-data-$(date +%Y%m%d-%H%M%S).tar.gz"
+	if ! docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+		--user "$UID_ENGINE:$UID_ENGINE" --entrypoint /rightsizer \
+		-v "$DATA":/data:ro -v "$BACKUPS":/backup "$new" backup "/backup/$file"; then
+		systemctl start rightsizer.service
+		status "$tag" "failed" "backup failed, nothing changed"
+		return 0
+	fi
+
+	status "$tag" "starting"
+	printf 'IMAGE=%s\n' "$new" >"$ENV_FILE.new"
+	chmod 0644 "$ENV_FILE.new"
+	mv "$ENV_FILE.new" "$ENV_FILE"
+	systemctl start rightsizer.service
+	after=""
+	if ready; then
+		after="$(count || true)"
+	fi
+	if [ -n "$after" ] && { [ -z "$before" ] || [ "$after" -ge "$before" ]; }; then
+		status "$tag" "done"
+		systemctl restart rightsizer-console.service || true
+		docker image rm "$old" >/dev/null 2>&1 || true
+		log "upgrade to $tag complete"
+		return 0
+	fi
+
+	log "upgrade to $tag failed, rolling back"
+	systemctl stop rightsizer.service
+	docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+		--user "$UID_ENGINE:$UID_ENGINE" --entrypoint /rightsizer \
+		-v "$DATA":/data -v "$BACKUPS":/backup:ro "$old" restore "/backup/$file" ||
+		docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+			--user "$UID_ENGINE:$UID_ENGINE" --entrypoint /rightsizer \
+			-v "$DATA":/data -v "$BACKUPS":/backup:ro "$new" restore "/backup/$file" || true
+	printf 'IMAGE=%s\n' "$old" >"$ENV_FILE"
+	chmod 0644 "$ENV_FILE"
+	systemctl start rightsizer.service
+	status "$tag" "rolled back" "the new version did not start or load all analyses"
+}
+
+case "${1:-}" in
+network) network ;;
+prepare) prepare ;;
+engine) engine ;;
+upgrade) upgrade ;;
+*)
+	echo "usage: rightsizer-host network|prepare|engine|upgrade" >&2
+	exit 2
+	;;
+esac

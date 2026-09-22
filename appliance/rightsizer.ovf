@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1" xmlns:cim="http://schemas.dmtf.org/wbem/wscim/1/common" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1" xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData" xmlns:vmw="http://www.vmware.com/schema/ovf" xmlns:vssd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <References>
+    <File ovf:href="rightsizer-system.vmdk" ovf:id="system" ovf:size="{system_size}"/>
+    <File ovf:href="rightsizer-bundle.vmdk" ovf:id="bundle" ovf:size="{bundle_size}"/>
+  </References>
+  <DiskSection>
+    <Info>Virtual disks</Info>
+    <Disk ovf:capacity="{system_capacity}" ovf:capacityAllocationUnits="byte" ovf:diskId="system" ovf:fileRef="system" ovf:format="http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"/>
+    <Disk ovf:capacity="{bundle_capacity}" ovf:capacityAllocationUnits="byte" ovf:diskId="bundle" ovf:fileRef="bundle" ovf:format="http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"/>
+  </DiskSection>
+  <NetworkSection>
+    <Info>Logical networks</Info>
+    <Network ovf:name="Management">
+      <Description>Network that reaches vCenter and the administrators' workstations</Description>
+    </Network>
+  </NetworkSection>
+  <VirtualSystem ovf:id="rightsizer">
+    <Info>rightsizer appliance</Info>
+    <Name>rightsizer</Name>
+    <AnnotationSection>
+      <Info>Description</Info>
+      <Annotation>rightsizer {version}: read-only vSphere rightsizing appliance. Connect with: ssh admin@&lt;appliance address&gt;. https://github.com/MarcoColomb0/rightsizer</Annotation>
+    </AnnotationSection>
+    <ProductSection ovf:required="false">
+      <Info>Appliance settings</Info>
+      <Product>rightsizer</Product>
+      <Vendor>Marco Colombo</Vendor>
+      <Version>{version_number}</Version>
+      <FullVersion>{version}</FullVersion>
+      <ProductUrl>https://github.com/MarcoColomb0/rightsizer</ProductUrl>
+      <VendorUrl>https://marco.wf</VendorUrl>
+      <Category>Administrator</Category>
+      <Property ovf:key="guestinfo.rightsizer.admin_password" ovf:type="string" ovf:password="true" ovf:qualifiers="MinLen(12),MaxLen(256)" ovf:userConfigurable="true" ovf:value="">
+        <Label>Administrator password</Label>
+        <Description>Password for "ssh admin@appliance", at least 12 characters. It also encrypts the stored vCenter credentials. Changing it here later resets the password and clears stored credentials.</Description>
+      </Property>
+      <Category>Network</Category>
+      <Property ovf:key="guestinfo.hostname" ovf:type="string" ovf:qualifiers="MaxLen(253)" ovf:userConfigurable="true" ovf:value="rightsizer">
+        <Label>Hostname</Label>
+        <Description>Host name of the appliance.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.rightsizer.ip" ovf:type="string" ovf:qualifiers="MaxLen(18)" ovf:userConfigurable="true" ovf:value="">
+        <Label>IPv4 address with prefix</Label>
+        <Description>For example 10.0.10.25/24. Leave empty to use DHCP.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.rightsizer.gateway" ovf:type="string" ovf:qualifiers="MaxLen(15)" ovf:userConfigurable="true" ovf:value="">
+        <Label>Default gateway</Label>
+        <Description>For example 10.0.10.1. Ignored with DHCP.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.rightsizer.dns" ovf:type="string" ovf:qualifiers="MaxLen(128)" ovf:userConfigurable="true" ovf:value="">
+        <Label>DNS servers</Label>
+        <Description>Comma-separated IPv4 addresses.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.rightsizer.domain" ovf:type="string" ovf:qualifiers="MaxLen(253)" ovf:userConfigurable="true" ovf:value="">
+        <Label>Search domain</Label>
+        <Description>Optional DNS search domain, for example corp.local.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.rightsizer.ntp" ovf:type="string" ovf:qualifiers="MaxLen(256)" ovf:userConfigurable="true" ovf:value="">
+        <Label>NTP servers</Label>
+        <Description>Comma-separated host names or addresses. Leave empty for the defaults.</Description>
+      </Property>
+      <Category>Preferences</Category>
+      <Property ovf:key="guestinfo.rightsizer.timezone" ovf:type="string" ovf:qualifiers="MaxLen(64)" ovf:userConfigurable="true" ovf:value="UTC">
+        <Label>Time zone</Label>
+        <Description>IANA time zone used in reports, for example Europe/Rome.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.rightsizer.update_check" ovf:type="boolean" ovf:userConfigurable="true" ovf:value="true">
+        <Label>Check for updates</Label>
+        <Description>Look up new rightsizer releases on GitHub every 6 hours. Updates are only installed when an administrator accepts them.</Description>
+      </Property>
+      <Property ovf:key="guestinfo.ignition.config.data" ovf:type="string" ovf:userConfigurable="false" ovf:value="{ignition}"/>
+      <Property ovf:key="guestinfo.ignition.config.data.encoding" ovf:type="string" ovf:userConfigurable="false" ovf:value="base64"/>
+    </ProductSection>
+    <OperatingSystemSection ovf:id="100" vmw:osType="other5xLinux64Guest">
+      <Info>Guest operating system</Info>
+      <Description>Flatcar Container Linux {flatcar_version}</Description>
+    </OperatingSystemSection>
+    <VirtualHardwareSection ovf:transport="com.vmware.guestInfo">
+      <Info>Virtual hardware</Info>
+      <System>
+        <vssd:ElementName>Virtual Hardware Family</vssd:ElementName>
+        <vssd:InstanceID>0</vssd:InstanceID>
+        <vssd:VirtualSystemIdentifier>rightsizer</vssd:VirtualSystemIdentifier>
+        <vssd:VirtualSystemType>vmx-15</vssd:VirtualSystemType>
+      </System>
+      <Item>
+        <rasd:AllocationUnits>hertz * 10^6</rasd:AllocationUnits>
+        <rasd:Description>Number of virtual CPUs</rasd:Description>
+        <rasd:ElementName>2 virtual CPUs</rasd:ElementName>
+        <rasd:InstanceID>1</rasd:InstanceID>
+        <rasd:ResourceType>3</rasd:ResourceType>
+        <rasd:VirtualQuantity>2</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:AllocationUnits>byte * 2^20</rasd:AllocationUnits>
+        <rasd:Description>Memory</rasd:Description>
+        <rasd:ElementName>2048 MB of memory</rasd:ElementName>
+        <rasd:InstanceID>2</rasd:InstanceID>
+        <rasd:ResourceType>4</rasd:ResourceType>
+        <rasd:VirtualQuantity>2048</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:Address>0</rasd:Address>
+        <rasd:Description>SCSI controller</rasd:Description>
+        <rasd:ElementName>SCSI controller 0</rasd:ElementName>
+        <rasd:InstanceID>3</rasd:InstanceID>
+        <rasd:ResourceSubType>VirtualSCSI</rasd:ResourceSubType>
+        <rasd:ResourceType>6</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>0</rasd:AddressOnParent>
+        <rasd:ElementName>System disk</rasd:ElementName>
+        <rasd:HostResource>ovf:/disk/system</rasd:HostResource>
+        <rasd:InstanceID>4</rasd:InstanceID>
+        <rasd:Parent>3</rasd:Parent>
+        <rasd:ResourceType>17</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>1</rasd:AddressOnParent>
+        <rasd:ElementName>Bundle disk</rasd:ElementName>
+        <rasd:HostResource>ovf:/disk/bundle</rasd:HostResource>
+        <rasd:InstanceID>5</rasd:InstanceID>
+        <rasd:Parent>3</rasd:Parent>
+        <rasd:ResourceType>17</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>7</rasd:AddressOnParent>
+        <rasd:AutomaticAllocation>true</rasd:AutomaticAllocation>
+        <rasd:Connection>Management</rasd:Connection>
+        <rasd:Description>VMXNET3 adapter</rasd:Description>
+        <rasd:ElementName>Network adapter 1</rasd:ElementName>
+        <rasd:InstanceID>6</rasd:InstanceID>
+        <rasd:ResourceSubType>VmxNet3</rasd:ResourceSubType>
+        <rasd:ResourceType>10</rasd:ResourceType>
+        <vmw:Config ovf:required="false" vmw:key="wakeOnLanEnabled" vmw:value="false"/>
+      </Item>
+      <Item ovf:required="false">
+        <rasd:AutomaticAllocation>false</rasd:AutomaticAllocation>
+        <rasd:ElementName>Video card</rasd:ElementName>
+        <rasd:InstanceID>7</rasd:InstanceID>
+        <rasd:ResourceType>24</rasd:ResourceType>
+        <vmw:Config ovf:required="false" vmw:key="enable3DSupport" vmw:value="false"/>
+        <vmw:Config ovf:required="false" vmw:key="videoRamSizeInKB" vmw:value="4096"/>
+      </Item>
+      <Item ovf:required="false">
+        <rasd:AutomaticAllocation>false</rasd:AutomaticAllocation>
+        <rasd:ElementName>VMCI device</rasd:ElementName>
+        <rasd:InstanceID>8</rasd:InstanceID>
+        <rasd:ResourceSubType>vmware.vmci</rasd:ResourceSubType>
+        <rasd:ResourceType>1</rasd:ResourceType>
+        <vmw:Config ovf:required="false" vmw:key="allowUnrestrictedCommunication" vmw:value="false"/>
+      </Item>
+      <vmw:Config ovf:required="false" vmw:key="firmware" vmw:value="bios"/>
+      <vmw:Config ovf:required="false" vmw:key="cpuHotAddEnabled" vmw:value="false"/>
+      <vmw:Config ovf:required="false" vmw:key="cpuHotRemoveEnabled" vmw:value="false"/>
+      <vmw:Config ovf:required="false" vmw:key="memoryHotAddEnabled" vmw:value="false"/>
+      <vmw:Config ovf:required="false" vmw:key="nestedHVEnabled" vmw:value="false"/>
+      <vmw:Config ovf:required="false" vmw:key="tools.syncTimeWithHost" vmw:value="false"/>
+      <vmw:Config ovf:required="false" vmw:key="tools.toolsUpgradePolicy" vmw:value="manual"/>
+      <vmw:Config ovf:required="false" vmw:key="tools.afterPowerOn" vmw:value="true"/>
+      <vmw:Config ovf:required="false" vmw:key="tools.beforeGuestShutdown" vmw:value="true"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="isolation.tools.copy.disable" vmw:value="TRUE"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="isolation.tools.paste.disable" vmw:value="TRUE"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="isolation.tools.dnd.disable" vmw:value="TRUE"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="isolation.tools.setGUIOptions.enable" vmw:value="FALSE"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="isolation.device.connectable.disable" vmw:value="TRUE"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="tools.setInfo.sizeLimit" vmw:value="1048576"/>
+      <vmw:ExtraConfig ovf:required="false" vmw:key="RemoteDisplay.maxConnections" vmw:value="1"/>
+    </VirtualHardwareSection>
+  </VirtualSystem>
+</Envelope>

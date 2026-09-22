@@ -1,0 +1,21 @@
+variant: flatcar
+version: 1.1.0
+ignition:
+  config:
+    merge:
+      - local: appliance.ign
+storage:
+  files:
+    - path: /etc/rightsizer/ovfenv.xml
+      mode: 0600
+      contents:
+        inline: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Environment xmlns="http://schemas.dmtf.org/ovf/environment/1" xmlns:oe="http://schemas.dmtf.org/ovf/environment/1">
+            <PropertySection>
+              <Property oe:key="guestinfo.hostname" oe:value="rightsizer-ci"/>
+              <Property oe:key="guestinfo.rightsizer.admin_password" oe:value="ci &amp; admin password"/>
+              <Property oe:key="guestinfo.rightsizer.update_check" oe:value="False"/>
+              <Property oe:key="guestinfo.rightsizer.timezone" oe:value="Europe/Rome"/>
+            </PropertySection>
+          </Environment>
