@@ -1,0 +1,403 @@
+package engine
+
+import (
+	"context"
+	"encoding/gob"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
+)
+
+// Source is one vCenter being analysed.
+type Source struct {
+	id  string
+	dir string
+	eng *Engine
+
+	mu     sync.Mutex
+	st     state
+	client *vc.Client
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	lastPoll, nextPoll time.Time
+	lastErr            string
+	authFails          int
+	result             *analysis.Result
+}
+
+func (s *Source) status(full bool) Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := Status{
+		ID: s.id, Phase: s.st.Phase, Config: s.st.Config, Started: s.st.Started, Ends: s.st.Ends,
+		Finished: s.st.Finished, About: s.st.About, LastPoll: s.lastPoll, NextPoll: s.nextPoll,
+		LastError: s.lastErr, ReportFile: s.st.Report,
+	}
+	if s.st.Store != nil {
+		st.Polls = s.st.Store.Polls
+	}
+	if s.result != nil {
+		t := s.result.Totals
+		st.Totals = &t
+		st.Findings = len(s.result.Findings)
+		if full {
+			r := *s.result
+			r.VMs = nil
+			r.Clusters = slices.Clone(r.Clusters)
+			for i := range r.Clusters {
+				if n := len(r.Clusters[i].Points); n > 72 {
+					r.Clusters[i].Points = r.Clusters[i].Points[n-72:]
+				}
+			}
+			st.Result = &r
+		}
+	}
+	return st
+}
+
+func (s *Source) connect(ctx context.Context, password string) (*vc.Client, error) {
+	s.mu.Lock()
+	cfg := s.st.Config
+	s.mu.Unlock()
+	return vc.Connect(ctx, vc.Credentials{Host: cfg.Host, User: cfg.User, Password: password, Fingerprint: cfg.Fingerprint})
+}
+
+func (s *Source) begin(cl *vc.Client) {
+	now := time.Now()
+	s.mu.Lock()
+	s.st.Phase, s.st.Started, s.st.Ends = Running, now, now.Add(s.st.Config.Duration)
+	s.st.About, s.st.Store = cl.About(), analysis.NewStore()
+	s.client = cl
+	_ = s.save()
+	s.mu.Unlock()
+	s.run()
+}
+
+func (s *Source) resume(cl *vc.Client) {
+	s.mu.Lock()
+	s.client = cl
+	s.st.Phase = Running
+	s.lastErr, s.authFails = "", 0
+	s.mu.Unlock()
+	s.run()
+}
+
+func (s *Source) phase() Phase {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.st.Phase
+}
+
+func (s *Source) run() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.cancel = cancel
+	s.mu.Unlock()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.loop(ctx)
+	}()
+}
+
+func (s *Source) stop() {
+	s.mu.Lock()
+	cancel := s.cancel
+	s.cancel = nil
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.wg.Wait()
+	s.mu.Lock()
+	cl := s.client
+	s.client = nil
+	s.mu.Unlock()
+	if cl != nil {
+		ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
+		cl.Close(ctx)
+		c()
+	}
+}
+
+func (s *Source) loop(ctx context.Context) {
+	var lastInv time.Time
+	for {
+		s.mu.Lock()
+		ends := s.st.Ends
+		s.mu.Unlock()
+		if !time.Now().Before(ends) {
+			go func() {
+				s.stop()
+				if err := s.finalize(); err != nil {
+					slog.Error("finalize", "source", s.id, "err", err)
+				}
+			}()
+			return
+		}
+		if time.Since(lastInv) >= inventoryEvery {
+			if err := s.refreshInventory(ctx); err != nil {
+				if s.fail(err) {
+					return
+				}
+			} else {
+				lastInv = time.Now()
+			}
+		}
+		if err := s.poll(ctx); err != nil {
+			if s.fail(err) {
+				return
+			}
+		}
+		next := time.Now().Add(pollEvery)
+		if next.After(ends) {
+			next = ends
+		}
+		s.mu.Lock()
+		s.nextPoll = next
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(next)):
+		}
+	}
+}
+
+// fail records err and reports whether the loop must stop. Repeated login
+// failures pause the analysis so a changed password cannot lock the account.
+func (s *Source) fail(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	slog.Warn("collection error", "source", s.id, "err", err)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastErr = fmt.Sprintf("%s: %v", time.Now().Format("Jan 02 15:04"), err)
+	if !vc.IsAuthError(err) {
+		return false
+	}
+	s.authFails++
+	if s.authFails < maxAuthFails {
+		return false
+	}
+	s.st.Phase = NeedPassword
+	_ = s.save()
+	return true
+}
+
+func (s *Source) refreshInventory(ctx context.Context) error {
+	s.mu.Lock()
+	cl, filter := s.client, s.st.Config.Clusters
+	s.mu.Unlock()
+	inv, err := cl.Inventory(ctx)
+	if err != nil {
+		return err
+	}
+	if len(filter) > 0 {
+		inv = filterClusters(inv, filter)
+	}
+	s.mu.Lock()
+	s.st.Inventory = inv
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Source) poll(ctx context.Context) error {
+	s.mu.Lock()
+	cl, inv, store := s.client, s.st.Inventory, s.st.Store
+	s.mu.Unlock()
+	if inv == nil {
+		return errors.New("inventory not loaded yet")
+	}
+	now, err := cl.Now(ctx)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	since := store.Newest()
+	s.mu.Unlock()
+	if !since.IsZero() {
+		since = since.Add(-time.Minute)
+		if now.Sub(since) > 55*time.Minute {
+			since = now.Add(-55 * time.Minute)
+		}
+	}
+
+	var vms []string
+	vcpu := map[string]int{}
+	for _, v := range inv.VMs {
+		if v.PowerOn && !v.Template {
+			vms = append(vms, v.Ref)
+			vcpu[v.Ref] = v.VCPU
+		}
+	}
+	var hosts []string
+	for _, h := range inv.Hosts {
+		if h.Connected {
+			hosts = append(hosts, h.Ref)
+		}
+	}
+	vs, err := cl.Sample(ctx, "VirtualMachine", vms, vc.VMMetrics, since)
+	if err != nil {
+		return err
+	}
+	hs, err := cl.Sample(ctx, "HostSystem", hosts, vc.HostMetrics, since)
+	if err != nil {
+		return err
+	}
+	hc, cp := analysis.Capacity(inv)
+
+	s.mu.Lock()
+	for _, v := range vs {
+		store.AddVM(v, vcpu[v.Ref])
+	}
+	store.AddHosts(hs, hc, cp)
+	store.Polls++
+	s.lastPoll = time.Now()
+	s.lastErr = ""
+	s.authFails = 0
+	err = s.save()
+	s.mu.Unlock()
+	s.refreshResult()
+	return err
+}
+
+func (s *Source) finalize() error {
+	s.mu.Lock()
+	if s.st.Phase == Done {
+		s.mu.Unlock()
+		return nil
+	}
+	s.st.Phase = Done
+	s.st.Finished = time.Now()
+	s.nextPoll = time.Time{}
+	s.mu.Unlock()
+	s.refreshResult()
+	s.mu.Lock()
+	res := s.result
+	s.mu.Unlock()
+	if res == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.save()
+	}
+	path, err := writePDF(filepath.Join(s.dir, "reports"), res)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.st.Report = path
+	err = s.save()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	_, err = s.eng.web.Serve(s.id, path)
+	return err
+}
+
+func (s *Source) refreshResult() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Inventory == nil || s.st.Store == nil {
+		return
+	}
+	end := time.Now()
+	if !s.st.Finished.IsZero() {
+		end = s.st.Finished
+	}
+	r := analysis.Analyze(s.st.Inventory, s.st.Store, analysis.ProfileByName(s.st.Config.Profile), s.st.Started, end, s.st.Config.Duration)
+	r.Final = s.st.Phase == Done
+	r.VCenter = fmt.Sprintf("%s — %s", s.st.Config.Host, s.st.About)
+	s.result = r
+}
+
+func (s *Source) currentResult() *analysis.Result {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.result
+}
+
+func writePDF(dir string, res *analysis.Result) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	kind := "interim"
+	if res.Final {
+		kind = "final"
+	}
+	path := filepath.Join(dir, fmt.Sprintf("rightsizer-%s-%s.pdf", kind, res.Generated.Format("20060102-150405")))
+	if err := report.WritePDF(res, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func (s *Source) statePath() string { return filepath.Join(s.dir, "state.gob") }
+
+func (s *Source) save() error {
+	s.st.Version = stateVersion
+	return writeState(s.statePath(), &s.st)
+}
+
+func writeState(path string, st *state) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := gob.NewEncoder(f).Encode(st); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func readState(path string) (state, error) {
+	var st state
+	f, err := os.Open(path)
+	if err != nil {
+		return st, err
+	}
+	defer f.Close()
+	if err := gob.NewDecoder(f).Decode(&st); err != nil {
+		return st, err
+	}
+	if st.Version > stateVersion {
+		return st, fmt.Errorf("state written by a newer rightsizer (format %d > %d)", st.Version, stateVersion)
+	}
+	return st, nil
+}
+
+func filterClusters(inv *vc.Inventory, keep []string) *vc.Inventory {
+	out := &vc.Inventory{Taken: inv.Taken}
+	for _, h := range inv.Hosts {
+		if slices.Contains(keep, h.Cluster) {
+			out.Hosts = append(out.Hosts, h)
+		}
+	}
+	for _, v := range inv.VMs {
+		if slices.Contains(keep, v.Cluster) {
+			out.VMs = append(out.VMs, v)
+		}
+	}
+	return out
+}

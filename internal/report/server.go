@@ -6,7 +6,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -21,12 +20,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 )
 
 type Share struct {
+	ID          string
+	Source      string
 	URL         string
 	Fingerprint string
 	Expires     time.Time
@@ -34,135 +36,183 @@ type Share struct {
 	Downloads   int
 }
 
+type entry struct {
+	Share
+	path  string
+	timer *time.Timer
+}
+
+// Server exposes reports on a short-lived HTTPS listener. It listens only
+// while at least one report is shared; each share has its own unguessable
+// link and expires on its own.
 type Server struct {
 	Listen     string
 	PublicHost string
 	PublicPort string
 	TTL        time.Duration
 
-	mu    sync.Mutex
-	srv   *http.Server
-	share *Share
-	timer *time.Timer
+	mu     sync.Mutex
+	srv    *http.Server
+	port   string
+	fp     string
+	shares map[string]*entry
 }
 
-func (s *Server) Current() *Share {
+func (s *Server) Shares() []Share {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.share == nil {
-		return nil
+	out := make([]Share, 0, len(s.shares))
+	for _, e := range s.shares {
+		out = append(out, e.Share)
 	}
-	c := *s.share
-	return &c
+	slices.SortFunc(out, func(a, b Share) int { return a.Expires.Compare(b.Expires) })
+	return out
 }
 
-// Serve starts a short-lived HTTPS server exposing only path, behind an
-// unguessable URL and a freshly generated self-signed certificate.
-func (s *Server) Serve(path string) (*Share, error) {
-	s.Stop()
+// Serve shares path, replacing any earlier share of the same source.
+func (s *Server) Serve(source, path string) (*Share, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, e := range s.shares {
+		if e.Source == source {
+			s.drop(id)
+		}
+	}
+	if s.srv == nil {
+		if err := s.start(); err != nil {
+			return nil, err
+		}
+	}
 	tok := make([]byte, 24)
 	if _, err := rand.Read(tok); err != nil {
 		return nil, err
 	}
-	token := base64.RawURLEncoding.EncodeToString(tok)
+	id := base64.RawURLEncoding.EncodeToString(tok)
+	name := filepath.Base(path)
+	e := &entry{
+		Share: Share{
+			ID:          id[:8],
+			Source:      source,
+			URL:         fmt.Sprintf("https://%s/%s/%s", net.JoinHostPort(s.PublicHost, s.port), id, name),
+			Fingerprint: s.fp,
+			Expires:     time.Now().Add(s.TTL),
+			File:        name,
+		},
+		path: path,
+	}
+	if s.shares == nil {
+		s.shares = map[string]*entry{}
+	}
+	s.shares[id] = e
+	e.timer = time.AfterFunc(s.TTL, func() { s.Stop(e.ID) })
+	slog.Info("report shared", "file", name, "expires", e.Expires)
+	sh := e.Share
+	return &sh, nil
+}
+
+// Stop removes the share with the given short ID ("" stops everything).
+func (s *Server) Stop(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for tok, e := range s.shares {
+		if id == "" || e.ID == id {
+			s.drop(tok)
+		}
+	}
+}
+
+func (s *Server) drop(tok string) {
+	e := s.shares[tok]
+	if e == nil {
+		return
+	}
+	e.timer.Stop()
+	delete(s.shares, tok)
+	slog.Info("report no longer shared", "file", e.File)
+	if len(s.shares) == 0 && s.srv != nil {
+		srv := s.srv
+		s.srv = nil
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(ctx)
+			slog.Info("download server stopped")
+		}()
+	}
+}
+
+func (s *Server) start() error {
 	cert, fp, err := selfSigned(s.PublicHost)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	name := filepath.Base(path)
-	want := "/" + token + "/" + name
 	ln, err := net.Listen("tcp", s.Listen)
 	if err != nil {
-		return nil, fmt.Errorf("download server: %w", err)
+		return fmt.Errorf("download server: %w", err)
 	}
-	port := s.PublicPort
-	if port == "" {
-		_, port, _ = net.SplitHostPort(ln.Addr().String())
+	s.port = s.PublicPort
+	if s.port == "" {
+		_, s.port, _ = net.SplitHostPort(ln.Addr().String())
 	}
-	sh := &Share{
-		URL:         fmt.Sprintf("https://%s%s", net.JoinHostPort(s.PublicHost, port), want),
-		Fingerprint: fp,
-		Expires:     time.Now().Add(s.TTL),
-		File:        name,
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Strict-Transport-Security", "max-age=86400")
-		h.Set("Cache-Control", "no-store")
-		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'none'")
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if subtle.ConstantTimeCompare([]byte(r.URL.Path), []byte(want)) != 1 {
-			http.NotFound(w, r)
-			return
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			http.Error(w, "report unavailable", http.StatusGone)
-			return
-		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			http.Error(w, "report unavailable", http.StatusGone)
-			return
-		}
-		h.Set("Content-Type", "application/pdf")
-		h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
-		slog.Info("report downloaded", "remote", r.RemoteAddr)
-		s.mu.Lock()
-		if s.share != nil {
-			s.share.Downloads++
-		}
-		s.mu.Unlock()
-		http.ServeContent(w, r, name, st.ModTime(), f)
-	})
-	srv := &http.Server{
-		Addr:              s.Listen,
-		Handler:           mux,
+	s.fp = fp
+	s.srv = &http.Server{
+		Handler:           http.HandlerFunc(s.handle),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    8 << 10,
 		ErrorLog:          log.New(io.Discard, "", 0),
-		TLSConfig: &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cert},
-		},
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}},
 	}
+	srv := s.srv
 	go func() {
 		if err := srv.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("download server", "err", err)
 		}
 	}()
-	s.mu.Lock()
-	s.srv, s.share = srv, sh
-	s.timer = time.AfterFunc(s.TTL, s.Stop)
-	s.mu.Unlock()
-	slog.Info("report available for download", "file", name, "expires", sh.Expires)
-	return s.Current(), nil
+	return nil
 }
 
-func (s *Server) Stop() {
+func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Strict-Transport-Security", "max-age=86400")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", "default-src 'none'")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tok, name, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 	s.mu.Lock()
-	srv, t := s.srv, s.timer
-	s.srv, s.share, s.timer = nil, nil, nil
+	e := s.shares[tok]
+	if ok && e != nil && e.File == name {
+		e.Downloads++
+	} else {
+		e = nil
+	}
 	s.mu.Unlock()
-	if t != nil {
-		t.Stop()
+	if e == nil {
+		http.NotFound(w, r)
+		return
 	}
-	if srv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-		slog.Info("download server stopped")
+	f, err := os.Open(e.path)
+	if err != nil {
+		http.Error(w, "report unavailable", http.StatusGone)
+		return
 	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		http.Error(w, "report unavailable", http.StatusGone)
+		return
+	}
+	h.Set("Content-Type", "application/pdf")
+	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	slog.Info("report downloaded", "file", name, "remote", r.RemoteAddr)
+	http.ServeContent(w, r, name, st.ModTime(), f)
 }
 
 func selfSigned(host string) (tls.Certificate, string, error) {
@@ -193,10 +243,14 @@ func selfSigned(host string) (tls.Certificate, string, error) {
 	if err != nil {
 		return tls.Certificate{}, "", err
 	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, Fingerprint(der), nil
+}
+
+func Fingerprint(der []byte) string {
 	sum := sha256.Sum256(der)
 	parts := make([]string, len(sum))
 	for i, b := range sum {
 		parts[i] = fmt.Sprintf("%02X", b)
 	}
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, strings.Join(parts, ":"), nil
+	return strings.Join(parts, ":")
 }

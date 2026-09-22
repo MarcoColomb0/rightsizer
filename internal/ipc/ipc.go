@@ -17,15 +17,70 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
-type StartRequest struct {
+// Backend is everything the console needs from the engine, whether it runs
+// in-process (SSH sessions) or over the local socket (docker exec).
+type Backend interface {
+	Summary() (*engine.Summary, error)
+	Source(id string) (*engine.Status, error)
+	Probe(host string) (*vc.CertInfo, error)
+	Add(cfg engine.Config, password string) (string, error)
+	Resume(id, password string) error
+	Finish(id string) error
+	Remove(id string) error
+	Publish(id string) (*report.Share, error)
+	StopShare(id string) error
+	ChangePassword(old, next string) error
+}
+
+type Local struct{ E *engine.Engine }
+
+func (l Local) Summary() (*engine.Summary, error) { s := l.E.Summary(); return &s, nil }
+
+func (l Local) Source(id string) (*engine.Status, error) {
+	s, err := l.E.Source(id)
+	return &s, err
+}
+
+func (l Local) Probe(host string) (*vc.CertInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return vc.Probe(ctx, host)
+}
+
+func (l Local) Add(cfg engine.Config, password string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return l.E.Add(ctx, cfg, password)
+}
+
+func (l Local) Resume(id, password string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return l.E.Resume(ctx, id, password)
+}
+
+func (l Local) Finish(id string) error                   { return l.E.Finish(id) }
+func (l Local) Remove(id string) error                   { return l.E.Remove(id) }
+func (l Local) Publish(id string) (*report.Share, error) { return l.E.Publish(id) }
+func (l Local) StopShare(id string) error                { l.E.StopShare(id); return nil }
+func (l Local) ChangePassword(old, next string) error    { return l.E.ChangePassword(old, next) }
+
+type addRequest struct {
 	Config   engine.Config
 	Password string
 }
 
-type ProbeRequest struct{ Host string }
+type idRequest struct {
+	ID       string
+	Password string
+	Host     string
+	Old      string
+}
 
 type errorBody struct{ Error string }
 
+// Serve exposes the engine on a unix socket that only the container user can
+// open. Administrator password changes are not available here.
 func Serve(ctx context.Context, sock string, e *engine.Engine) error {
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
@@ -36,51 +91,55 @@ func Serve(ctx context.Context, sock string, e *engine.Engine) error {
 		ln.Close()
 		return err
 	}
+	b := Local{E: e}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, e.Status(), nil)
+	mux.HandleFunc("GET /summary", func(w http.ResponseWriter, r *http.Request) {
+		s, err := b.Summary()
+		reply(w, s, err)
+	})
+	mux.HandleFunc("GET /sources/{id}", func(w http.ResponseWriter, r *http.Request) {
+		s, err := b.Source(r.PathValue("id"))
+		reply(w, s, err)
 	})
 	mux.HandleFunc("POST /probe", func(w http.ResponseWriter, r *http.Request) {
-		var req ProbeRequest
-		if !decode(w, r, &req) {
-			return
+		var req idRequest
+		if decode(w, r, &req) {
+			ci, err := b.Probe(req.Host)
+			reply(w, ci, err)
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-		defer cancel()
-		ci, err := vc.Probe(ctx, req.Host)
-		reply(w, ci, err)
 	})
-	mux.HandleFunc("POST /start", func(w http.ResponseWriter, r *http.Request) {
-		var req StartRequest
-		if !decode(w, r, &req) {
-			return
+	mux.HandleFunc("POST /sources", func(w http.ResponseWriter, r *http.Request) {
+		var req addRequest
+		if decode(w, r, &req) {
+			id, err := b.Add(req.Config, req.Password)
+			reply(w, idRequest{ID: id}, err)
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		defer cancel()
-		reply(w, nil, e.Start(ctx, req.Config, req.Password))
 	})
-	mux.HandleFunc("POST /resume", func(w http.ResponseWriter, r *http.Request) {
-		var req StartRequest
-		if !decode(w, r, &req) {
-			return
+	mux.HandleFunc("POST /sources/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
+		var req idRequest
+		if decode(w, r, &req) {
+			reply(w, nil, b.Resume(r.PathValue("id"), req.Password))
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		defer cancel()
-		reply(w, nil, e.Resume(ctx, req.Password))
 	})
-	mux.HandleFunc("POST /finish", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, nil, e.Finish())
+	mux.HandleFunc("POST /sources/{id}/finish", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, b.Finish(r.PathValue("id")))
 	})
-	mux.HandleFunc("POST /cancel", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, nil, e.Cancel())
+	mux.HandleFunc("DELETE /sources/{id}", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, b.Remove(r.PathValue("id")))
 	})
 	mux.HandleFunc("POST /publish", func(w http.ResponseWriter, r *http.Request) {
-		sh, err := e.Publish()
-		reply(w, sh, err)
+		var req idRequest
+		if decode(w, r, &req) {
+			sh, err := b.Publish(req.ID)
+			reply(w, sh, err)
+		}
 	})
-	mux.HandleFunc("POST /unpublish", func(w http.ResponseWriter, r *http.Request) {
-		e.Unpublish()
-		reply(w, nil, nil)
+	mux.HandleFunc("POST /shares/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, b.StopShare(r.PathValue("id")))
+	})
+	mux.HandleFunc("GET /latest-report", func(w http.ResponseWriter, r *http.Request) {
+		p, err := e.LatestReport()
+		reply(w, idRequest{ID: p}, err)
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -154,30 +213,45 @@ func (c *Client) call(method, path string, in, out any) error {
 	return nil
 }
 
-func (c *Client) Status() (*engine.Status, error) {
+func (c *Client) Summary() (*engine.Summary, error) {
+	var s engine.Summary
+	return &s, c.call("GET", "/summary", nil, &s)
+}
+
+func (c *Client) Source(id string) (*engine.Status, error) {
 	var s engine.Status
-	return &s, c.call("GET", "/status", nil, &s)
+	return &s, c.call("GET", "/sources/"+id, nil, &s)
 }
 
 func (c *Client) Probe(host string) (*vc.CertInfo, error) {
 	var ci vc.CertInfo
-	return &ci, c.call("POST", "/probe", ProbeRequest{host}, &ci)
+	return &ci, c.call("POST", "/probe", idRequest{Host: host}, &ci)
 }
 
-func (c *Client) Start(cfg engine.Config, password string) error {
-	return c.call("POST", "/start", StartRequest{cfg, password}, nil)
+func (c *Client) Add(cfg engine.Config, password string) (string, error) {
+	var r idRequest
+	return r.ID, c.call("POST", "/sources", addRequest{cfg, password}, &r)
 }
 
-func (c *Client) Resume(password string) error {
-	return c.call("POST", "/resume", StartRequest{Password: password}, nil)
+func (c *Client) Resume(id, password string) error {
+	return c.call("POST", "/sources/"+id+"/resume", idRequest{Password: password}, nil)
 }
 
-func (c *Client) Finish() error { return c.call("POST", "/finish", nil, nil) }
-func (c *Client) Cancel() error { return c.call("POST", "/cancel", nil, nil) }
+func (c *Client) Finish(id string) error { return c.call("POST", "/sources/"+id+"/finish", nil, nil) }
+func (c *Client) Remove(id string) error { return c.call("DELETE", "/sources/"+id, nil, nil) }
 
-func (c *Client) Publish() (*report.Share, error) {
+func (c *Client) Publish(id string) (*report.Share, error) {
 	var s report.Share
-	return &s, c.call("POST", "/publish", nil, &s)
+	return &s, c.call("POST", "/publish", idRequest{ID: id}, &s)
 }
 
-func (c *Client) Unpublish() error { return c.call("POST", "/unpublish", nil, nil) }
+func (c *Client) StopShare(id string) error { return c.call("POST", "/shares/"+id+"/stop", nil, nil) }
+
+func (c *Client) ChangePassword(string, string) error {
+	return errors.New("not available in this installation")
+}
+
+func (c *Client) LatestReport() (string, error) {
+	var r idRequest
+	return r.ID, c.call("GET", "/latest-report", nil, &r)
+}

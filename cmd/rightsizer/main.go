@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -19,7 +21,9 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/sshd"
 	"github.com/MarcoColomb0/rightsizer/internal/tui"
+	"github.com/MarcoColomb0/rightsizer/internal/vault"
 )
 
 var version = "dev"
@@ -66,22 +70,17 @@ func usage() {
 	fmt.Print(`rightsizer - read-only vSphere rightsizing analysis
 
 Usage:
-  rightsizer [tui]   open the interactive console (default)
-  rightsizer status  print a one-line status
-  rightsizer export  write the latest PDF report to stdout
+  rightsizer [tui]           open the interactive console (default)
+  rightsizer status          print a short status
+  rightsizer export          write the latest PDF report to stdout
   rightsizer backup <file>   archive the data directory
   rightsizer restore <file>  replace the data directory from an archive
-  rightsizer daemon  run the collector (used by the container)
+  rightsizer daemon          run the engine (used by the container)
   rightsizer version
 `)
 }
 
-func dataDir() string {
-	if d := os.Getenv("RIGHTSIZER_DATA"); d != "" {
-		return d
-	}
-	return "/data"
-}
+func dataDir() string { return env("RIGHTSIZER_DATA", "/data") }
 
 func socket() string { return filepath.Join(dataDir(), "rightsizer.sock") }
 
@@ -91,6 +90,8 @@ func env(k, def string) string {
 	}
 	return def
 }
+
+func appliance() bool { return os.Getenv("RIGHTSIZER_APPLIANCE") == "1" }
 
 func runDaemon() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -102,7 +103,7 @@ func runDaemon() error {
 	}
 	hours, err := strconv.Atoi(env("RIGHTSIZER_SHARE_HOURS", "24"))
 	if err != nil || hours < 1 {
-		return fmt.Errorf("invalid RIGHTSIZER_SHARE_HOURS")
+		return errors.New("invalid RIGHTSIZER_SHARE_HOURS")
 	}
 	web := &report.Server{
 		Listen:     env("RIGHTSIZER_LISTEN", ":8443"),
@@ -110,25 +111,89 @@ func runDaemon() error {
 		PublicPort: env("RIGHTSIZER_PUBLIC_PORT", "8443"),
 		TTL:        time.Duration(hours) * time.Hour,
 	}
-	e, err := engine.New(dataDir(), web)
+	var v *vault.Vault
+	if appliance() {
+		v = vault.Open(dataDir())
+		if err := bootstrap(v); err != nil {
+			return err
+		}
+	}
+	e, err := engine.New(dataDir(), web, v)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	slog.Info("rightsizer daemon started", "version", version, "data", dataDir())
-	err = ipc.Serve(ctx, socket(), e)
+	slog.Info("rightsizer engine started", "version", version, "appliance", appliance())
+
+	errc := make(chan error, 2)
+	go func() { errc <- ipc.Serve(ctx, socket(), e) }()
+	if appliance() {
+		srv, err := sshd.New(sshd.Config{
+			Listen:      env("RIGHTSIZER_SSH_LISTEN", ":2222"),
+			HostKeyPath: filepath.Join(dataDir(), "ssh", "host_ed25519"),
+			Login:       e.Unlock,
+			Program: func() tea.Model {
+				return tui.New(ipc.Local{E: e}, tui.Options{Version: version, AdminSettings: true})
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Join(dataDir(), "ssh"), 0o700); err != nil {
+			return err
+		}
+		go func() { errc <- srv.ListenAndServe() }()
+		defer func() {
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(sctx)
+		}()
+	}
+	select {
+	case <-ctx.Done():
+	case err = <-errc:
+	}
 	e.Shutdown()
-	slog.Info("rightsizer daemon stopped")
+	slog.Info("rightsizer engine stopped")
 	return err
+}
+
+// bootstrap applies an administrator password provided by the appliance
+// (vApp property) on first boot or as a reset. The file is removed once read.
+func bootstrap(v *vault.Vault) error {
+	path := env("RIGHTSIZER_BOOTSTRAP", filepath.Join(dataDir(), "bootstrap", "admin-password"))
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if !v.Configured() {
+			slog.Error("no administrator password set; set it in the appliance vApp options")
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer os.Remove(path)
+	pw := strings.TrimRight(string(b), "\r\n")
+	if err := v.Reset(pw); err != nil {
+		slog.Error("administrator password from vApp options rejected", "err", err)
+		return nil
+	}
+	slog.Info("administrator password set from vApp options; stored vCenter credentials were cleared")
+	return nil
 }
 
 func runTUI() error {
 	c := ipc.NewClient(socket())
-	if _, err := c.Status(); err != nil {
-		return fmt.Errorf("daemon not running (%v). Start it with: docker start rightsizer", err)
+	if _, err := c.Summary(); err != nil {
+		return fmt.Errorf("engine not running (%v). Start it with: rightsizer start", err)
 	}
-	m, err := tea.NewProgram(tui.New(c, version, os.Getenv("RIGHTSIZER_LATEST"), os.Getenv("RIGHTSIZER_RELEASE_URL")), tea.WithAltScreen()).Run()
+	m, err := tea.NewProgram(tui.New(c, tui.Options{
+		Version:    version,
+		Latest:     os.Getenv("RIGHTSIZER_LATEST"),
+		ReleaseURL: os.Getenv("RIGHTSIZER_RELEASE_URL"),
+		CanUpgrade: true,
+	}), tea.WithAltScreen()).Run()
 	if err != nil {
 		return err
 	}
@@ -139,40 +204,31 @@ func runTUI() error {
 }
 
 func printStatus() error {
-	s, err := ipc.NewClient(socket()).Status()
+	s, err := ipc.NewClient(socket()).Summary()
 	if err != nil {
 		return err
 	}
-	switch s.Phase {
-	case engine.Idle:
-		fmt.Println("idle: no analysis running")
-	case engine.NeedPassword:
-		fmt.Printf("paused: %s, run `rightsizer` to enter the password again\n", s.Config.Host)
-	case engine.Running:
-		fmt.Printf("running: %s, %d polls, ends %s\n", s.Config.Host, s.Polls, s.Ends.Format(time.RFC1123))
-	case engine.Done:
-		fmt.Printf("done: %s, finished %s\n", s.Config.Host, s.Finished.Format(time.RFC1123))
-		if s.Share != nil {
-			fmt.Printf("report: %s (expires %s)\n", s.Share.URL, s.Share.Expires.Format(time.RFC1123))
-		}
+	count := map[engine.Phase]int{}
+	for _, src := range s.Sources {
+		count[src.Phase]++
+	}
+	fmt.Printf("sources: %d (collecting %d, paused %d, done %d)\n", len(s.Sources), count[engine.Running], count[engine.NeedPassword], count[engine.Done])
+	for _, src := range s.Sources {
+		fmt.Printf("  %s  %-14s %s\n", src.ID, src.Phase, src.Config.Host)
+	}
+	for _, sh := range s.Shares {
+		fmt.Printf("report: %s (expires %s)\n", sh.URL, sh.Expires.Format(time.RFC1123))
 	}
 	return nil
 }
 
 func export() error {
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-		return fmt.Errorf("redirect the output to a file, e.g. rightsizer export > report.pdf")
+		return errors.New("redirect the output to a file, e.g. rightsizer export > report.pdf")
 	}
-	s, err := ipc.NewClient(socket()).Status()
+	path, err := ipc.NewClient(socket()).LatestReport()
 	if err != nil {
 		return err
-	}
-	path := s.ReportFile
-	if s.Share != nil {
-		path = filepath.Join(dataDir(), "reports", s.Share.File)
-	}
-	if path == "" {
-		return fmt.Errorf("no report yet: finish the analysis or press p in the console")
 	}
 	f, err := os.Open(path)
 	if err != nil {

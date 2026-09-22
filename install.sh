@@ -150,7 +150,17 @@ create() {
 
 running() { [ "$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)" = "true" ]; }
 installed_version() { docker exec "$C" /rightsizer version 2>/dev/null | awk '{print $2}'; }
-phase() { docker exec "$C" /rightsizer status 2>/dev/null | cut -d: -f1; }
+# sources prints how many analyses the engine holds (v0.1 printed one phase line).
+sources() {
+	local first
+	first="$(docker exec "$C" /rightsizer status 2>/dev/null | head -n1)" || return 1
+	case "$first" in
+	sources:*) awk '{print $2}' <<<"$first" ;;
+	idle:*) echo 0 ;;
+	"") return 1 ;;
+	*) echo 1 ;;
+	esac
+}
 
 wait_ready() {
 	for _ in $(seq 1 60); do
@@ -212,7 +222,7 @@ update_launcher() {
 }
 
 upgrade() {
-	local tag="$1" old_image old_id old_ver old_phase new_image file="" new_phase
+	local tag="$1" old_image old_id old_ver old_count new_image file="" new_count
 	[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid release: $tag"
 	docker inspect "$C" >/dev/null 2>&1 || die "rightsizer container not found, re-run the installer"
 	old_image="$(docker inspect -f '{{.Config.Image}}' "$C")"
@@ -221,8 +231,8 @@ upgrade() {
 	wait_ready >/dev/null || true
 	old_ver="$(installed_version || true)"
 	old_ver="${old_ver:-unknown}"
-	old_phase="$(phase || true)"
-	old_phase="${old_phase:-unknown}"
+	old_count="$(sources || true)"
+	old_count="${old_count:-unknown}"
 	docker rm -f "$C-previous" >/dev/null 2>&1 || true
 
 	rollback() {
@@ -269,7 +279,7 @@ upgrade() {
 	trap 'rollback "Interrupted"' INT TERM
 	docker stop -t 60 "$C" >/dev/null || rollback "Could not stop the collector"
 	docker rename "$C" "$C-previous" || rollback "Could not rename the old container"
-	ok "State saved (was: ${old_phase})"
+	ok "State saved (${old_count} analyses)"
 
 	step 4 "Backing up data"
 	docker volume create "$BACKUP_VOL" >/dev/null
@@ -285,20 +295,20 @@ upgrade() {
 	step 6 "Checking health and data"
 	wait_ready || rollback "New version did not become ready"
 	printf '\n'
-	new_phase="$(phase || true)"
-	new_phase="${new_phase:-unknown}"
-	if [ "$old_phase" != "idle" ] && [ "$old_phase" != "unknown" ] && [ "$new_phase" = "idle" ]; then
-		rollback "New version did not load the saved analysis"
+	new_count="$(sources || true)"
+	new_count="${new_count:-unknown}"
+	if [[ "$old_count" =~ ^[0-9]+$ ]] && [ "$old_count" -gt 0 ] && ! { [[ "$new_count" =~ ^[0-9]+$ ]] && [ "$new_count" -ge "$old_count" ]; }; then
+		rollback "New version did not load all saved analyses (${new_count} of ${old_count})"
 	fi
-	ok "Collector ready (now: ${new_phase})"
+	ok "Collector ready (${new_count} analyses loaded)"
 
 	trap - INT TERM
 	docker rm "$C-previous" >/dev/null 2>&1 || true
 	[ "$old_id" = "$(docker inspect -f '{{.Image}}' "$C")" ] || docker image rm "$old_id" >/dev/null 2>&1 || true
 	printf '\n'
 	ok "Upgraded ${old_ver} → ${tag}. Collected data kept."
-	if [ "$new_phase" = "paused" ]; then
-		say "Enter the vCenter password in the console to continue the analysis."
+	if [[ "$new_count" =~ ^[1-9] ]]; then
+		say "Open the console and resume paused analyses with their vCenter passwords."
 	fi
 	return 0
 }

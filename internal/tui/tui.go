@@ -22,11 +22,13 @@ type screen int
 
 const (
 	scrLoading screen = iota
+	scrHome
 	scrSetup
 	scrCert
 	scrBusy
-	scrDash
+	scrSource
 	scrResume
+	scrSettings
 	scrUpdate
 )
 
@@ -55,7 +57,11 @@ var durations = []struct {
 }
 
 type (
-	statusMsg struct {
+	summaryMsg struct {
+		s   *engine.Summary
+		err error
+	}
+	sourceMsg struct {
 		s   *engine.Status
 		err error
 	}
@@ -65,23 +71,39 @@ type (
 	}
 	doneMsg struct {
 		what string
+		id   string
 		err  error
 	}
 	tickMsg time.Time
 )
 
+type Options struct {
+	Version       string
+	Latest        string
+	ReleaseURL    string
+	CanUpgrade    bool
+	AdminSettings bool
+}
+
 type Model struct {
-	c       *ipc.Client
-	st      *engine.Status
-	scr     screen
-	w, h    int
-	err     string
-	note    string
+	b    ipc.Backend
+	opt  Options
+	sum  *engine.Summary
+	src  *engine.Status
+	cur  string
+	sel  int
+	scr  screen
+	back screen
+	w, h int
+	err  string
+	note string
+
 	in      [4]textinput.Model
 	focus   int
 	durIdx  int
 	profIdx int
 	cert    *vc.CertInfo
+
 	spin    spinner.Model
 	busy    string
 	tab     int
@@ -89,32 +111,22 @@ type Model struct {
 	prog    progress.Model
 	confirm string
 	pass    textinput.Model
+	pw      [3]textinput.Model
+	pwFocus int
 
-	current, latest, notes string
-	asked, upgrade         bool
+	asked, upgrade bool
 }
 
-func (m Model) UpgradeRequested() bool { return m.upgrade }
-
-func (m Model) updateAvailable() bool { return version.Newer(m.latest, m.current) }
-
-func New(c *ipc.Client, current, latest, notes string) Model {
-	m := Model{c: c, durIdx: 3, profIdx: 1, current: current, latest: latest, notes: notes}
+func New(b ipc.Backend, opt Options) Model {
+	m := Model{b: b, opt: opt, durIdx: 3, profIdx: 1}
 	ph := []string{"vcenter.example.local", "readonly@vsphere.local", "", "all clusters (or: prod-01, prod-02)"}
 	for i := range m.in {
-		t := textinput.New()
-		t.Placeholder = ph[i]
-		t.CharLimit = 256
-		t.Prompt = ""
-		m.in[i] = t
+		m.in[i] = input(ph[i], i == fPass)
 	}
-	m.in[2].EchoMode = textinput.EchoPassword
-	m.in[2].EchoCharacter = '•'
-	m.in[0].Focus()
-	m.pass = textinput.New()
-	m.pass.Prompt = ""
-	m.pass.EchoMode = textinput.EchoPassword
-	m.pass.EchoCharacter = '•'
+	for i := range m.pw {
+		m.pw[i] = input("", true)
+	}
+	m.pass = input("", true)
 	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(sAccent))
 	m.prog = progress.New(progress.WithSolidFill(string(accent.Dark)), progress.WithoutPercentage())
 	m.tbl = table.New(table.WithFocused(true))
@@ -127,17 +139,50 @@ func New(c *ipc.Client, current, latest, notes string) Model {
 	return m
 }
 
+func input(placeholder string, secret bool) textinput.Model {
+	t := textinput.New()
+	t.Placeholder = placeholder
+	t.CharLimit = 256
+	t.Prompt = ""
+	if secret {
+		t.EchoMode = textinput.EchoPassword
+		t.EchoCharacter = '•'
+	}
+	return t
+}
+
+func (m Model) UpgradeRequested() bool { return m.upgrade }
+
+func (m Model) updateAvailable() bool {
+	return m.opt.CanUpgrade && version.Newer(m.opt.Latest, m.opt.Version)
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetch, m.spin.Tick, tick())
+	return tea.Batch(m.fetch(), m.spin.Tick, tick())
 }
 
 func tick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func (m Model) fetch() tea.Msg {
-	s, err := m.c.Status()
-	return statusMsg{s, err}
+func (m Model) fetch() tea.Cmd {
+	b, cur, scr := m.b, m.cur, m.scr
+	cmds := []tea.Cmd{func() tea.Msg {
+		s, err := b.Summary()
+		return summaryMsg{s, err}
+	}}
+	if cur != "" && (scr == scrSource || scr == scrResume) {
+		cmds = append(cmds, func() tea.Msg {
+			s, err := b.Source(cur)
+			return sourceMsg{s, err}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m Model) busyCmd(label, what, id string, fn func() error) (tea.Model, tea.Cmd) {
+	m.back, m.scr, m.busy, m.err = m.scr, scrBusy, label, ""
+	return m, tea.Batch(m.spin.Tick, func() tea.Msg { return doneMsg{what, id, fn()} })
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -148,24 +193,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeTable()
 		return m, nil
 	case tickMsg:
-		return m, tea.Batch(m.fetch, tick())
+		return m, tea.Batch(m.fetch(), tick())
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
-	case statusMsg:
+	case summaryMsg:
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			return m, nil
 		}
-		m.st = msg.s
-		if !m.asked && m.updateAvailable() {
-			m.asked = true
-			m.scr = scrUpdate
+		m.sum = msg.s
+		m.sel = min(m.sel, max(len(m.sum.Sources)-1, 0))
+		if m.scr == scrLoading {
+			m.scr = scrHome
+			if !m.asked && m.updateAvailable() {
+				m.asked = true
+				m.scr = scrUpdate
+			}
 		}
-		if m.scr != scrBusy && m.scr != scrCert && m.scr != scrUpdate {
-			m.route()
+		return m, nil
+	case sourceMsg:
+		if msg.err != nil {
+			if m.scr == scrSource {
+				m.scr, m.cur, m.src = scrHome, "", nil
+			}
+			return m, nil
 		}
+		m.src = msg.s
 		m.fillTable()
 		return m, nil
 	case probeMsg:
@@ -175,54 +230,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cert = msg.c
 		if msg.c.Trusted {
-			return m.start("")
+			return m.add("")
 		}
 		m.scr = scrCert
 		return m, nil
 	case doneMsg:
-		m.busy = ""
-		if msg.err != nil {
-			m.err = msg.err.Error()
-			switch msg.what {
-			case "start":
-				m.scr = scrSetup
-			case "resume":
-				m.scr = scrResume
-			default:
-				m.scr = scrDash
-			}
-			return m, nil
-		}
-		m.err = ""
-		if msg.what == "start" || msg.what == "resume" {
-			m.in[2].SetValue("")
-			m.pass.SetValue("")
-		}
-		m.scr = scrLoading
-		return m, m.fetch
+		return m.done(msg)
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 		switch m.scr {
+		case scrHome:
+			return m.keyHome(msg)
 		case scrSetup:
-			return m.updateSetup(msg)
+			return m.keySetup(msg)
 		case scrCert:
-			return m.updateCert(msg)
+			return m.keyCert(msg)
+		case scrSource:
+			return m.keySource(msg)
 		case scrResume:
-			return m.updateResume(msg)
-		case scrDash:
-			return m.updateDash(msg)
+			return m.keyResume(msg)
+		case scrSettings:
+			return m.keySettings(msg)
 		case scrUpdate:
-			switch msg.String() {
-			case "y", "Y", "enter":
-				m.upgrade = true
-				return m, tea.Quit
-			case "n", "N", "esc":
-				m.scr = scrLoading
-				m.route()
-			}
-			return m, nil
+			return m.keyUpdate(msg)
 		case scrLoading:
 			if msg.String() == "q" {
 				return m, tea.Quit
@@ -232,27 +264,113 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) route() {
-	switch m.st.Phase {
-	case engine.Idle:
-		if m.scr != scrSetup {
+func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
+	m.busy = ""
+	if msg.err != nil {
+		m.err = msg.err.Error()
+		switch msg.what {
+		case "add":
 			m.scr = scrSetup
-			m.setFocus(fHost)
-		}
-	case engine.NeedPassword:
-		if m.scr != scrResume {
+		case "resume":
 			m.scr = scrResume
 			m.pass.Focus()
+		case "password":
+			m.scr = scrSettings
+		default:
+			m.scr = m.back
 		}
-	default:
-		m.scr = scrDash
+		return m, nil
 	}
+	m.err = ""
+	switch msg.what {
+	case "add":
+		m.in[fPass].SetValue("")
+		m.cur, m.scr, m.tab, m.src = msg.id, scrSource, 0, nil
+		m.note = "Analysis started. You can leave the console; collection continues."
+	case "resume":
+		m.pass.SetValue("")
+		m.scr = scrSource
+	case "remove":
+		m.cur, m.src, m.scr = "", nil, scrHome
+	case "password":
+		for i := range m.pw {
+			m.pw[i].SetValue("")
+		}
+		m.scr, m.note = scrHome, "Administrator password changed."
+	case "publish":
+		m.scr, m.note = m.back, "Report published. The link is shown below."
+	default:
+		m.scr = m.back
+	}
+	return m, m.fetch()
 }
 
-func (m Model) updateSetup(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) selected() *engine.Status {
+	if m.sum == nil || m.sel >= len(m.sum.Sources) {
+		return nil
+	}
+	return &m.sum.Sources[m.sel]
+}
+
+func (m Model) keyHome(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.note = ""
+	n := 0
+	if m.sum != nil {
+		n = len(m.sum.Sources)
+	}
+	switch k.String() {
+	case "q", "esc":
+		return m, tea.Quit
+	case "up", "k":
+		m.sel = max(m.sel-1, 0)
+	case "down", "j":
+		m.sel = min(m.sel+1, max(n-1, 0))
+	case "enter":
+		if s := m.selected(); s != nil {
+			m.cur, m.src, m.scr, m.tab = s.ID, nil, scrSource, 0
+			return m, m.fetch()
+		}
+	case "a":
+		m.scr, m.err = scrSetup, ""
+		m.setFocus(fHost)
+	case "p":
+		if n > 0 {
+			return m.busyCmd("Building the combined PDF report…", "publish", "", func() error {
+				_, err := m.b.Publish("")
+				return err
+			})
+		}
+	case "s":
+		if m.sum != nil && len(m.sum.Shares) > 0 {
+			b := m.b
+			shares := m.sum.Shares
+			return m, func() tea.Msg {
+				for _, sh := range shares {
+					if err := b.StopShare(sh.ID); err != nil {
+						return doneMsg{"unshare", "", err}
+					}
+				}
+				return doneMsg{"unshare", "", nil}
+			}
+		}
+	case "c":
+		if m.opt.AdminSettings {
+			m.scr, m.pwFocus, m.err = scrSettings, 0, ""
+			m.focusPw()
+		}
+	case "u":
+		if m.updateAvailable() {
+			m.scr = scrUpdate
+		}
+	}
+	return m, nil
+}
+
+func (m Model) keySetup(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc":
-		return m, tea.Quit
+		m.scr, m.err = scrHome, ""
+		return m, nil
 	case "tab", "down":
 		m.setFocus((m.focus + 1) % fCount)
 		return m, nil
@@ -282,9 +400,10 @@ func (m Model) updateSetup(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = "vCenter, username and password are required."
 			return m, nil
 		}
-		m.err, m.scr, m.busy = "", scrBusy, "Checking vCenter certificate…"
+		m.err, m.scr, m.busy = "", scrBusy, "Checking the vCenter certificate…"
+		b := m.b
 		return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-			c, err := m.c.Probe(host)
+			c, err := b.Probe(host)
 			return probeMsg{c, err}
 		})
 	}
@@ -315,17 +434,17 @@ func (m *Model) setFocus(f int) {
 	}
 }
 
-func (m Model) updateCert(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) keyCert(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "y", "Y":
-		return m.start(m.cert.Fingerprint)
+		return m.add(m.cert.Fingerprint)
 	case "n", "N", "esc":
-		m.scr, m.err = scrSetup, "Certificate not trusted; analysis not started."
+		m.scr, m.err = scrSetup, "Certificate not trusted; the source was not added."
 	}
 	return m, nil
 }
 
-func (m Model) start(fp string) (tea.Model, tea.Cmd) {
+func (m Model) add(fp string) (tea.Model, tea.Cmd) {
 	var cl []string
 	for _, s := range strings.Split(m.in[3].Value(), ",") {
 		if s = strings.TrimSpace(s); s != "" {
@@ -340,35 +459,18 @@ func (m Model) start(fp string) (tea.Model, tea.Cmd) {
 		Profile:     analysis.Profiles[m.profIdx].Name,
 		Clusters:    cl,
 	}
-	pw := m.in[fPass].Value()
-	m.scr, m.busy = scrBusy, "Connecting to vCenter and reading inventory…"
+	pw, b := m.in[fPass].Value(), m.b
+	m.scr, m.busy = scrBusy, "Connecting to vCenter and reading the inventory…"
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-		return doneMsg{"start", m.c.Start(cfg, pw)}
+		id, err := b.Add(cfg, pw)
+		return doneMsg{"add", id, err}
 	})
 }
 
-func (m Model) updateResume(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.String() {
-	case "esc":
-		return m, tea.Quit
-	case "enter":
-		pw := m.pass.Value()
-		if pw == "" {
-			return m, nil
-		}
-		m.scr, m.busy = scrBusy, "Reconnecting…"
-		return m, tea.Batch(m.spin.Tick, func() tea.Msg { return doneMsg{"resume", m.c.Resume(pw)} })
-	case "ctrl+f":
-		m.scr, m.busy = scrBusy, "Finishing with collected data…"
-		return m, tea.Batch(m.spin.Tick, func() tea.Msg { return doneMsg{"finish", m.c.Finish()} })
-	}
-	var cmd tea.Cmd
-	m.pass, cmd = m.pass.Update(k)
-	return m, cmd
-}
-
-func (m Model) updateDash(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
+	m.note = ""
+	id := m.cur
 	if m.confirm != "" {
 		what := m.confirm
 		m.confirm = ""
@@ -377,62 +479,133 @@ func (m Model) updateDash(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch what {
 		case "finish":
-			m.scr, m.busy = scrBusy, "Finishing analysis and building the report…"
-			return m, tea.Batch(m.spin.Tick, func() tea.Msg { return doneMsg{"finish", m.c.Finish()} })
-		case "cancel":
-			m.scr, m.busy = scrBusy, "Discarding analysis…"
-			return m, tea.Batch(m.spin.Tick, func() tea.Msg { return doneMsg{"cancel", m.c.Cancel()} })
+			return m.busyCmd("Finishing the analysis and building the report…", "finish", id, func() error { return m.b.Finish(id) })
+		case "remove":
+			return m.busyCmd("Removing the source and its data…", "remove", id, func() error { return m.b.Remove(id) })
 		}
 		return m, nil
 	}
-	running := m.st != nil && m.st.Phase == engine.Running
+	ph := engine.Phase("")
+	if m.src != nil {
+		ph = m.src.Phase
+	}
 	switch key {
-	case "q", "esc":
+	case "esc", "backspace", "h", "left":
+		m.scr, m.cur, m.src = scrHome, "", nil
+		return m, m.fetch()
+	case "q":
 		return m, tea.Quit
+	case "1":
+		m.tab = 0
+	case "2":
+		m.tab = 1
+	case "tab":
+		m.tab = 1 - m.tab
+	case "p":
+		return m.busyCmd("Building the PDF report…", "publish", id, func() error {
+			_, err := m.b.Publish(id)
+			return err
+		})
+	case "s":
+		for _, sh := range m.shares(id) {
+			b := m.b
+			shID := sh.ID
+			return m, func() tea.Msg { return doneMsg{"unshare", id, b.StopShare(shID)} }
+		}
+	case "f":
+		if ph == engine.Running || ph == engine.NeedPassword {
+			m.confirm = "finish"
+		}
+	case "x":
+		m.confirm = "remove"
+	case "r":
+		if ph == engine.NeedPassword {
+			if m.sum != nil && m.sum.Vault.Enabled && !m.sum.Vault.Locked {
+				return m.busyCmd("Resuming with stored credentials…", "resume", id, func() error { return m.b.Resume(id, "") })
+			}
+			m.scr, m.err = scrResume, ""
+			m.pass.Focus()
+		}
 	case "u":
 		if m.updateAvailable() {
 			m.scr = scrUpdate
 		}
-		return m, nil
-	case "1":
-		m.tab = 0
-		return m, nil
-	case "2":
-		m.tab = 1
-		return m, nil
-	case "tab":
-		m.tab = 1 - m.tab
-		return m, nil
-	case "p":
-		m.scr, m.busy = scrBusy, "Building PDF report…"
-		return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-			_, err := m.c.Publish()
-			return doneMsg{"publish", err}
-		})
-	case "s":
-		if m.st != nil && m.st.Share != nil {
-			return m, func() tea.Msg { return doneMsg{"unpublish", m.c.Unpublish()} }
+	default:
+		if m.tab == 1 {
+			var cmd tea.Cmd
+			m.tbl, cmd = m.tbl.Update(k)
+			return m, cmd
 		}
-	case "f":
-		if running {
-			m.confirm = "finish"
-		}
-		return m, nil
-	case "x":
-		if running {
-			m.confirm = "cancel"
-		}
-		return m, nil
-	case "n":
-		if m.st != nil && m.st.Phase == engine.Done {
-			m.confirm = "cancel"
-		}
-		return m, nil
 	}
-	if m.tab == 1 {
-		var cmd tea.Cmd
-		m.tbl, cmd = m.tbl.Update(k)
-		return m, cmd
+	return m, nil
+}
+
+func (m Model) keyResume(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "esc":
+		m.scr, m.err = scrSource, ""
+		m.pass.SetValue("")
+		return m, nil
+	case "enter":
+		pw, id := m.pass.Value(), m.cur
+		if pw == "" {
+			return m, nil
+		}
+		return m.busyCmd("Reconnecting to vCenter…", "resume", id, func() error { return m.b.Resume(id, pw) })
+	}
+	var cmd tea.Cmd
+	m.pass, cmd = m.pass.Update(k)
+	return m, cmd
+}
+
+func (m *Model) focusPw() {
+	for i := range m.pw {
+		m.pw[i].Blur()
+	}
+	m.pw[m.pwFocus].Focus()
+}
+
+func (m Model) keySettings(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "esc":
+		for i := range m.pw {
+			m.pw[i].SetValue("")
+		}
+		m.scr, m.err = scrHome, ""
+		return m, nil
+	case "tab", "down":
+		m.pwFocus = (m.pwFocus + 1) % len(m.pw)
+		m.focusPw()
+		return m, nil
+	case "shift+tab", "up":
+		m.pwFocus = (m.pwFocus + len(m.pw) - 1) % len(m.pw)
+		m.focusPw()
+		return m, nil
+	case "enter":
+		if m.pwFocus < len(m.pw)-1 {
+			m.pwFocus++
+			m.focusPw()
+			return m, nil
+		}
+		old, next, again := m.pw[0].Value(), m.pw[1].Value(), m.pw[2].Value()
+		if next != again {
+			m.err = "The new passwords do not match."
+			return m, nil
+		}
+		return m.busyCmd("Re-encrypting stored credentials…", "password", "", func() error { return m.b.ChangePassword(old, next) })
+	}
+	var cmd tea.Cmd
+	m.pw[m.pwFocus], cmd = m.pw[m.pwFocus].Update(k)
+	return m, cmd
+}
+
+func (m Model) keyUpdate(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch k.String() {
+	case "y", "Y", "enter":
+		m.upgrade = true
+		return m, tea.Quit
+	case "n", "N", "esc":
+		m.scr = scrHome
 	}
 	return m, nil
 }
@@ -449,12 +622,12 @@ func (m *Model) resizeTable() {
 }
 
 func (m *Model) fillTable() {
-	if m.st == nil || m.st.Result == nil {
+	if m.src == nil || m.src.Result == nil {
 		m.tbl.SetRows(nil)
 		return
 	}
-	rows := make([]table.Row, 0, len(m.st.Result.Findings))
-	for _, f := range m.st.Result.Findings {
+	rows := make([]table.Row, 0, len(m.src.Result.Findings))
+	for _, f := range m.src.Result.Findings {
 		rows = append(rows, table.Row{f.Severity.String(), f.VM, string(f.Kind), f.Current + " → " + f.Suggested, f.Confidence})
 	}
 	m.tbl.SetRows(rows)

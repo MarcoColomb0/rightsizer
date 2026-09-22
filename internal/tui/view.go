@@ -9,27 +9,35 @@ import (
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
 )
 
 func (m Model) View() string {
 	var body string
 	switch m.scr {
 	case scrLoading:
-		body = m.spin.View() + " Connecting to rightsizer daemon…"
+		body = m.spin.View() + " Connecting to the rightsizer engine…"
+	case scrHome:
+		body = m.viewHome()
 	case scrSetup:
 		body = m.viewSetup()
 	case scrCert:
 		body = m.viewCert()
 	case scrBusy:
 		body = m.spin.View() + " " + m.busy
+	case scrSource:
+		body = m.viewSource()
 	case scrResume:
 		body = m.viewResume()
-	case scrDash:
-		body = m.viewDash()
+	case scrSettings:
+		body = m.viewSettings()
 	case scrUpdate:
 		body = m.viewUpdate()
 	}
 	out := m.header() + "\n\n" + body
+	if m.note != "" {
+		out += "\n\n" + sAccent.Render("✓ "+m.note)
+	}
 	if m.err != "" {
 		out += "\n\n" + sBad.Render("✗ "+m.err)
 	}
@@ -38,12 +46,12 @@ func (m Model) View() string {
 
 func (m Model) header() string {
 	l := sTitle.Render("rightsizer") + sMuted.Render("  vSphere rightsizing · read-only")
-	if m.st != nil && m.st.Config.Host != "" && m.st.Phase != engine.Idle {
-		l += sMuted.Render("  ·  ") + m.st.Config.Host + "  " + phaseBadge(m.st.Phase)
+	if m.scr == scrSource && m.src != nil {
+		l += sMuted.Render("  ·  ") + m.src.Config.Host + "  " + phaseBadge(m.src.Phase)
 	}
 	if m.updateAvailable() && m.scr != scrUpdate {
-		l += "  " + sWarn.Render("↑ "+m.latest+" available")
-		if m.scr == scrDash {
+		l += "  " + sWarn.Render("↑ "+m.opt.Latest+" available")
+		if m.scr == scrHome || m.scr == scrSource {
 			l += sMuted.Render(" (u)")
 		}
 	}
@@ -62,10 +70,116 @@ func phaseBadge(p engine.Phase) string {
 	return ""
 }
 
+func (m Model) viewHome() string {
+	var b strings.Builder
+	if m.sum == nil {
+		return m.spin.View()
+	}
+	if len(m.sum.Sources) == 0 {
+		b.WriteString(sBold.Render("No vCenter sources yet") + "\n")
+		b.WriteString(sMuted.Render("Add one to start collecting. Use a vCenter account with the Read-only role.") + "\n\n")
+		b.WriteString(keys("a", "add vCenter", "q", "quit"))
+		return b.String()
+	}
+	b.WriteString(sBold.Render("vCenter sources") + "\n\n")
+	b.WriteString(sMuted.Render(fmt.Sprintf("  %-30s %-14s %-20s %-16s %-18s %s", "vCenter", "Status", "Progress", "vCPU", "Memory", "Findings")) + "\n")
+	for i, s := range m.sum.Sources {
+		cursor := "  "
+		if i == m.sel {
+			cursor = sAccent.Render("▸ ")
+		}
+		name := s.Config.Host
+		if len([]rune(name)) > 30 {
+			name = string([]rune(name)[:29]) + "…"
+		}
+		vcpu, mem := "–", "–"
+		if t := s.Totals; t != nil {
+			vcpu = fmt.Sprintf("%d → %d", t.VCPU, t.RecVCPU)
+			mem = fmt.Sprintf("%s → %s", analysis.GiB(t.MemMB), analysis.GiB(t.RecMemMB))
+		}
+		line := fmt.Sprintf("%-30s %s %-20s %-16s %-18s %d", name, pad(phaseBadge(s.Phase), 14), progressText(s), vcpu, mem, s.Findings)
+		if i == m.sel {
+			line = sBold.Render(line)
+		}
+		b.WriteString(cursor + line + "\n")
+	}
+	if len(m.sum.Shares) > 0 {
+		b.WriteString("\n" + sharesBox(m.sum.Shares, m.sum.Sources) + "\n")
+	}
+	b.WriteString("\n")
+	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF"}
+	if len(m.sum.Shares) > 0 {
+		k = append(k, "s", "stop sharing")
+	}
+	if m.opt.AdminSettings {
+		k = append(k, "c", "change password")
+	}
+	if m.updateAvailable() {
+		k = append(k, "u", "upgrade")
+	}
+	b.WriteString(keys(append(k, "q", "quit")...))
+	b.WriteString("\n" + sMuted.Render("Leaving the console does not stop collection."))
+	return b.String()
+}
+
+func pad(s string, w int) string {
+	if n := lipgloss.Width(s); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
+}
+
+func progressText(s engine.Status) string {
+	switch s.Phase {
+	case engine.Done:
+		return "finished " + s.Finished.Format("Jan 02")
+	case engine.NeedPassword:
+		return "needs password"
+	}
+	total := s.Ends.Sub(s.Started)
+	if total <= 0 {
+		return ""
+	}
+	frac := min(float64(time.Since(s.Started))/float64(total), 1)
+	return fmt.Sprintf("%3.0f%% · %s left", frac*100, human(time.Until(s.Ends)))
+}
+
+func sharesBox(shares []report.Share, sources []engine.Status) string {
+	names := map[string]string{"all": "All sources"}
+	for _, s := range sources {
+		names[s.ID] = s.Config.Host
+	}
+	var b strings.Builder
+	b.WriteString(sBold.Render("Shared reports"))
+	for _, sh := range shares {
+		b.WriteString(fmt.Sprintf("\n%s  %s\n%s", sBold.Render(names[sh.Source]),
+			sMuted.Render(fmt.Sprintf("expires %s · %d downloads", sh.Expires.Format("Jan 02 15:04"), sh.Downloads)),
+			sAccent.Render(sh.URL)))
+	}
+	b.WriteString("\n" + sMuted.Render("Self-signed TLS, SHA-256 "+shares[0].Fingerprint))
+	return sBox.BorderForeground(accent).Render(b.String())
+}
+
+func (m Model) shares(id string) []report.Share {
+	var out []report.Share
+	if m.sum != nil {
+		for _, sh := range m.sum.Shares {
+			if sh.Source == id {
+				out = append(out, sh)
+			}
+		}
+	}
+	return out
+}
+
 func (m Model) viewSetup() string {
 	var b strings.Builder
-	b.WriteString(sBold.Render("New analysis") + "\n")
-	b.WriteString(sMuted.Render("Credentials stay in memory only. A read-only vCenter role is enough.") + "\n\n")
+	b.WriteString(sBold.Render("Add a vCenter source") + "\n")
+	note := "The password is kept in memory only. A read-only vCenter role is enough."
+	if m.sum != nil && m.sum.Vault.Enabled {
+		note = "The password is stored encrypted with the administrator password. A read-only vCenter role is enough."
+	}
+	b.WriteString(sMuted.Render(note) + "\n\n")
 	row := func(f int, label, val string) {
 		l := sLabel.Render(label)
 		if m.focus == f {
@@ -86,7 +200,7 @@ func (m Model) viewSetup() string {
 		btn = btn.BorderForeground(accent).Foreground(accent).Bold(true)
 	}
 	b.WriteString(btn.Render("Start analysis") + "\n\n")
-	b.WriteString(keys("↑/↓", "move", "←/→", "change", "enter", "next/start", "esc", "quit"))
+	b.WriteString(keys("↑/↓", "move", "←/→", "change", "enter", "next/start", "esc", "back"))
 	return b.String()
 }
 
@@ -101,7 +215,7 @@ func (m Model) viewCert() string {
 	c := m.cert
 	var b strings.Builder
 	b.WriteString(sWarn.Render("⚠ The vCenter certificate is not signed by a trusted CA") + "\n")
-	b.WriteString(sMuted.Render("Common with self-signed VMCA certificates. Compare the fingerprint with the one shown in vCenter before trusting it.") + "\n\n")
+	b.WriteString(sMuted.Render("This is normal for self-signed VMCA certificates. Compare the fingerprint with the one shown in vCenter before you trust it.") + "\n\n")
 	kv := func(k, v string) { b.WriteString(sLabel.Render(k) + v + "\n") }
 	kv("Host", c.Host)
 	kv("Subject", c.Subject)
@@ -109,7 +223,7 @@ func (m Model) viewCert() string {
 	kv("Expires", c.NotAfter.Format("2006-01-02"))
 	kv("SHA-256", "")
 	b.WriteString(sBold.Render(wrapFP(c.Fingerprint)) + "\n\n")
-	b.WriteString("The fingerprint is pinned for this analysis: any other certificate is refused.\n\n")
+	b.WriteString("The fingerprint is pinned for this source. Any other certificate will be refused.\n\n")
 	b.WriteString(keys("y", "trust and start", "n", "back"))
 	return b.String()
 }
@@ -121,53 +235,79 @@ func wrapFP(fp string) string {
 	return fp
 }
 
+func (m Model) viewResume() string {
+	var b strings.Builder
+	b.WriteString(sWarn.Render("Analysis paused") + "\n")
+	b.WriteString(sMuted.Render("vCenter rejected the saved session or the engine restarted. Enter the vCenter password to continue collecting.") + "\n\n")
+	if s := m.src; s != nil {
+		b.WriteString(sLabel.Render("vCenter") + s.Config.Host + "\n")
+		b.WriteString(sLabel.Render("Username") + s.Config.User + "\n")
+		b.WriteString(sLabel.Render("Window") + fmt.Sprintf("%s → %s", s.Started.Format("Jan 02 15:04"), s.Ends.Format("Jan 02 15:04")) + "\n")
+		if s.LastError != "" {
+			b.WriteString(sLabel.Render("Last error") + sBad.Render(s.LastError) + "\n")
+		}
+	}
+	b.WriteString("\n" + sFocus.Width(16).Render("› Password") + m.pass.View() + "\n\n")
+	b.WriteString(keys("enter", "resume", "esc", "back"))
+	return b.String()
+}
+
+func (m Model) viewSettings() string {
+	var b strings.Builder
+	b.WriteString(sBold.Render("Change administrator password") + "\n")
+	b.WriteString(sMuted.Render("Used for console logins and to encrypt stored vCenter credentials. At least 12 characters.") + "\n\n")
+	labels := []string{"Current", "New", "Repeat new"}
+	for i, l := range labels {
+		lab := sLabel.Render(l)
+		if i == m.pwFocus {
+			lab = sFocus.Width(16).Render("› " + l)
+		}
+		b.WriteString(lab + m.pw[i].View() + "\n")
+	}
+	b.WriteString("\n" + keys("↑/↓", "move", "enter", "next/save", "esc", "cancel"))
+	return b.String()
+}
+
 func (m Model) viewUpdate() string {
 	var b strings.Builder
 	b.WriteString(sBold.Render("Update available") + "\n\n")
-	b.WriteString(sLabel.Render("Installed") + m.current + "\n")
-	b.WriteString(sLabel.Render("Latest") + sAccent.Render(m.latest) + "\n")
-	if m.notes != "" {
-		b.WriteString(sLabel.Render("Release notes") + m.notes + "\n")
+	b.WriteString(sLabel.Render("Installed") + m.opt.Version + "\n")
+	b.WriteString(sLabel.Render("Latest") + sAccent.Render(m.opt.Latest) + "\n")
+	if m.opt.ReleaseURL != "" {
+		b.WriteString(sLabel.Render("Release notes") + m.opt.ReleaseURL + "\n")
 	}
 	b.WriteString("\n")
 	steps := []string{
-		"Download the new image while the collector keeps running",
-		"Stop the collector cleanly so all samples are saved",
+		"Download the new version while collection keeps running",
+		"Stop the engine cleanly so every sample is saved",
 		"Back up collected data and reports",
-		"Start the new version and check the data loaded",
+		"Start the new version and check that the data loaded",
 		"Roll back automatically if anything fails",
 	}
 	for i, s := range steps {
 		b.WriteString(sMuted.Render(fmt.Sprintf("  %d. ", i+1)) + s + "\n")
 	}
-	if m.st != nil && (m.st.Phase == engine.Running || m.st.Phase == engine.NeedPassword) {
-		b.WriteString("\n" + sWarn.Render("An analysis is in progress. It continues after the upgrade; you will be asked for the vCenter password again.") + "\n")
-		b.WriteString(sMuted.Render("vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap.") + "\n")
+	if m.sum != nil {
+		for _, s := range m.sum.Sources {
+			if s.Phase == engine.Running || s.Phase == engine.NeedPassword {
+				msg := "Running analyses continue after the upgrade."
+				if !m.sum.Vault.Enabled {
+					msg += " You will be asked for their vCenter passwords again."
+				}
+				b.WriteString("\n" + sWarn.Render(msg) + "\n")
+				b.WriteString(sMuted.Render("vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap.") + "\n")
+				break
+			}
+		}
 	}
 	b.WriteString("\n" + sBold.Render("Upgrade now?") + " " + sAccent.Render("[Y/n]"))
 	return b.String()
 }
 
-func (m Model) viewResume() string {
-	s := m.st
-	var b strings.Builder
-	b.WriteString(sWarn.Render("Analysis paused") + " — the collector restarted or vCenter rejected the saved session.\n")
-	b.WriteString(sMuted.Render("Passwords are never written to disk, so enter it again to continue collecting.") + "\n\n")
-	b.WriteString(sLabel.Render("vCenter") + s.Config.Host + "\n")
-	b.WriteString(sLabel.Render("Username") + s.Config.User + "\n")
-	b.WriteString(sLabel.Render("Window") + fmt.Sprintf("%s → %s", s.Started.Format("Jan 02 15:04"), s.Ends.Format("Jan 02 15:04")) + "\n")
-	if s.LastError != "" {
-		b.WriteString(sLabel.Render("Last error") + sBad.Render(s.LastError) + "\n")
-	}
-	b.WriteString("\n" + sFocus.Width(16).Render("› Password") + m.pass.View() + "\n\n")
-	b.WriteString(keys("enter", "resume", "ctrl+f", "finish with data so far", "esc", "quit"))
-	return b.String()
-}
-
-func (m Model) viewDash() string {
-	s := m.st
+func (m Model) viewSource() string {
+	s := m.src
 	if s == nil {
-		return ""
+		return m.spin.View() + " Loading…"
 	}
 	var b strings.Builder
 	b.WriteString(m.progressLine() + "\n\n")
@@ -176,8 +316,8 @@ func (m Model) viewDash() string {
 	} else {
 		b.WriteString(m.spin.View() + sMuted.Render(" Waiting for the first samples…") + "\n\n")
 	}
-	if s.Share != nil {
-		b.WriteString(shareBox(s) + "\n")
+	if sh := m.shares(s.ID); len(sh) > 0 {
+		b.WriteString(sharesBox(sh, []engine.Status{*s}) + "\n")
 	}
 	tabs := []string{"1 Clusters", "2 Findings"}
 	for i, t := range tabs {
@@ -187,46 +327,41 @@ func (m Model) viewDash() string {
 			tabs[i] = sTabOff.Render(t)
 		}
 	}
-	n := 0
-	if s.Result != nil {
-		n = len(s.Result.Findings)
-	}
-	b.WriteString(strings.Join(tabs, "   ") + sMuted.Render(fmt.Sprintf("   (%d findings)", n)) + "\n\n")
+	b.WriteString(strings.Join(tabs, "   ") + sMuted.Render(fmt.Sprintf("   (%d findings)", s.Findings)) + "\n\n")
 	if m.tab == 0 {
 		b.WriteString(clusters(s.Result))
 	} else {
 		b.WriteString(m.tbl.View())
 	}
 	b.WriteString("\n\n")
-	switch {
-	case m.confirm == "finish":
+	switch m.confirm {
+	case "finish":
 		b.WriteString(sWarn.Render("Stop collecting now and build the final report? [y/N]"))
-	case m.confirm == "cancel":
-		b.WriteString(sBad.Render("Discard this analysis and all collected data? [y/N]"))
-	case s.Phase == engine.Running:
-		k := []string{"1/2", "tabs", "p", "interim PDF", "f", "finish now", "x", "discard"}
-		if m.updateAvailable() {
-			k = append(k, "u", "upgrade")
-		}
-		b.WriteString(keys(append(k, "q", "detach")...))
-	default:
-		k := []string{"1/2", "tabs", "p", "publish PDF"}
-		if s.Share != nil {
-			k = append(k, "s", "stop sharing")
-		}
-		if m.updateAvailable() {
-			k = append(k, "u", "upgrade")
-		}
-		b.WriteString(keys(append(k, "n", "new analysis", "q", "quit")...))
+		return b.String()
+	case "remove":
+		b.WriteString(sBad.Render("Remove this source with all its data and reports? [y/N]"))
+		return b.String()
 	}
-	if s.Phase == engine.Running {
-		b.WriteString("\n" + sMuted.Render("Detaching leaves the analysis running in the background. Run `rightsizer` again to reattach."))
+	k := []string{"esc", "back", "1/2", "tabs", "p", "PDF"}
+	if len(m.shares(s.ID)) > 0 {
+		k = append(k, "s", "stop sharing")
 	}
+	switch s.Phase {
+	case engine.NeedPassword:
+		k = append(k, "r", "resume", "f", "finish now")
+	case engine.Running:
+		k = append(k, "f", "finish now")
+	}
+	k = append(k, "x", "remove")
+	if m.updateAvailable() {
+		k = append(k, "u", "upgrade")
+	}
+	b.WriteString(keys(k...))
 	return b.String()
 }
 
 func (m Model) progressLine() string {
-	s := m.st
+	s := m.src
 	total := s.Ends.Sub(s.Started)
 	end := time.Now()
 	if !s.Finished.IsZero() {
@@ -251,13 +386,15 @@ func (m Model) progressLine() string {
 		if !s.NextPoll.IsZero() {
 			sub = append(sub, "next "+s.NextPoll.Format("15:04"))
 		}
+	case engine.NeedPassword:
+		sub = append(sub, "paused, press r to resume")
 	case engine.Done:
 		sub = append(sub, "finished "+s.Finished.Format("Mon Jan 02 15:04"))
 	}
 	sub = append(sub, fmt.Sprintf("%d polls", s.Polls), s.Config.Profile+" profile")
 	out := line + "\n" + sMuted.Render(strings.Join(sub, " · "))
 	if s.LastError != "" {
-		out += "\n" + sWarn.Render("⚠ "+s.LastError+" (retrying)")
+		out += "\n" + sWarn.Render("⚠ "+s.LastError)
 	}
 	return out
 }
@@ -280,14 +417,6 @@ func delta(a, b int) string {
 		return "–"
 	}
 	return fmt.Sprintf("%+.0f%%", float64(b-a)/float64(a)*100)
-}
-
-func shareBox(s *engine.Status) string {
-	sh := s.Share
-	body := sBold.Render("Report ready") + sMuted.Render(fmt.Sprintf("  %s · expires %s · %d downloads", sh.File, sh.Expires.Format("Jan 02 15:04"), sh.Downloads)) + "\n" +
-		sAccent.Render(sh.URL) + "\n" +
-		sMuted.Render("Self-signed TLS, SHA-256 "+sh.Fingerprint)
-	return sBox.BorderForeground(accent).Render(body)
 }
 
 var sparks = []rune("▁▂▃▄▅▆▇█")
@@ -318,13 +447,12 @@ func clusters(r *analysis.Result) string {
 		if len([]rune(name)) > 22 {
 			name = string([]rune(name)[:21]) + "…"
 		}
-		need := fmt.Sprintf("%d", c.HostsNeeded)
-		if c.HostsNeeded < c.Hosts {
-			need = sAccent.Render(fmt.Sprintf("%9s", need))
-		} else if c.HostsNeeded > c.Hosts {
-			need = sWarn.Render(fmt.Sprintf("%9s", need))
-		} else {
-			need = fmt.Sprintf("%9s", need)
+		need := fmt.Sprintf("%9d", c.HostsNeeded)
+		switch {
+		case c.HostsNeeded < c.Hosts:
+			need = sAccent.Render(need)
+		case c.HostsNeeded > c.Hosts:
+			need = sWarn.Render(need)
 		}
 		rows = append(rows, fmt.Sprintf("%-22s %6d %9s %7s %13s %19s %s  %s",
 			name, c.Hosts,

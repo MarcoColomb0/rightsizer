@@ -16,52 +16,90 @@ import (
 	"github.com/vmware/govmomi/simulator"
 
 	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/vault"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
-func TestEndToEnd(t *testing.T) {
-	pollEvery = 200 * time.Millisecond
+type sim struct {
+	host, user, pass, fp string
+	close                func()
+}
+
+func newSim(t *testing.T) sim {
+	t.Helper()
 	m := simulator.VPX()
 	m.Host, m.Cluster, m.Machine = 3, 2, 4
 	if err := m.Create(); err != nil {
 		t.Fatal(err)
 	}
-	defer m.Remove()
 	m.Service.TLS = new(tls.Config)
 	s := m.Service.NewServer()
-	defer s.Close()
 	pw, _ := s.URL.User.Password()
 	ci, err := vc.Probe(context.Background(), s.URL.Host)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return sim{s.URL.Host, s.URL.User.Username(), pw, ci.Fingerprint, func() { s.Close(); m.Remove() }}
+}
+
+func (v sim) cfg() Config {
+	return Config{Host: v.host, User: v.user, Fingerprint: v.fp, Duration: 24 * time.Hour, Profile: "balanced"}
+}
+
+func waitPolls(t *testing.T, e *Engine, id string, n uint64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st, err := e.Source(id)
+		if err == nil && st.Polls >= n && st.Result != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no polls: %+v %v", st, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestMultiSourceWithVault(t *testing.T) {
+	pollEvery = 100 * time.Millisecond
+	a, b := newSim(t), newSim(t)
+	defer a.close()
+	defer b.close()
 
 	dir := t.TempDir()
 	web := &report.Server{Listen: "127.0.0.1:0", PublicHost: "127.0.0.1", TTL: time.Hour}
-	e, err := New(dir, web)
+	v := vault.Open(dir)
+	admin := "appliance admin password"
+	if err := v.Reset(admin); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(dir, web, v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Host: s.URL.Host, User: s.URL.User.Username(), Fingerprint: ci.Fingerprint, Duration: 24 * time.Hour, Profile: "balanced"}
-	if err := e.Start(context.Background(), Config{Duration: time.Hour}, pw); err == nil {
+	ctx := context.Background()
+	if _, err := e.Add(ctx, Config{Duration: time.Hour}, "x"); err == nil {
 		t.Fatal("short duration must be rejected")
 	}
-	if err := e.Start(context.Background(), cfg, pw); err != nil {
+	ida, err := e.Add(ctx, a.cfg(), a.pass)
+	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		st := e.Status()
-		if st.Polls >= 3 && st.Result != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no polls: %+v", st)
-		}
-		time.Sleep(100 * time.Millisecond)
+	if _, err := e.Add(ctx, a.cfg(), a.pass); err == nil {
+		t.Fatal("same vCenter twice must be rejected")
+	}
+	idb, err := e.Add(ctx, b.cfg(), b.pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPolls(t, e, ida, 2)
+	waitPolls(t, e, idb, 2)
+	if n := len(e.Summary().Sources); n != 2 {
+		t.Fatalf("want 2 sources, got %d", n)
 	}
 
-	sh, err := e.Publish()
+	sh, err := e.Publish("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,64 +111,137 @@ func TestEndToEnd(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	if res.StatusCode != 200 || !strings.HasPrefix(string(body), "%PDF") {
-		t.Fatalf("download failed: %d", res.StatusCode)
+		t.Fatalf("combined download failed: %d", res.StatusCode)
 	}
 	sum := sha256.Sum256(res.TLS.PeerCertificates[0].Raw)
-	if got := fmt.Sprintf("%X", sum); strings.ReplaceAll(sh.Fingerprint, ":", "") != got {
+	if strings.ReplaceAll(sh.Fingerprint, ":", "") != fmt.Sprintf("%X", sum) {
 		t.Fatal("served certificate does not match advertised fingerprint")
 	}
-	bad, err := cl.Get(strings.Replace(sh.URL, "/rightsizer-", "x/rightsizer-", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	bad.Body.Close()
+	bad, _ := cl.Get(strings.Replace(sh.URL, "/rightsizer-", "/x-", 1))
 	if bad.StatusCode != 404 {
-		t.Fatalf("wrong token must 404, got %d", bad.StatusCode)
+		t.Fatalf("wrong file name must 404, got %d", bad.StatusCode)
 	}
 
-	if err := e.Finish(); err != nil {
+	if err := e.Finish(idb); err != nil {
 		t.Fatal(err)
 	}
-	st := e.Status()
-	if st.Phase != Done || st.ReportFile == "" || st.Share == nil {
-		t.Fatalf("not finalized: %+v", st)
+	if st, _ := e.Source(idb); st.Phase != Done || st.ReportFile == "" {
+		t.Fatalf("not finalized: %+v", st.Phase)
 	}
-	if fi, err := os.Stat(st.ReportFile); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("report file: %v %v", fi, err)
+	if len(e.Summary().Shares) != 2 {
+		t.Fatal("combined and final report should both be shared")
 	}
-	if out := os.Getenv("RIGHTSIZER_PDF_OUT"); out != "" {
-		b, _ := os.ReadFile(st.ReportFile)
-		_ = os.WriteFile(out, b, 0o600)
-	}
+	e.Shutdown()
 
-	e2, err := New(dir, web)
+	// Restart: sources come back paused and the vault is locked until the
+	// administrator logs in, which resumes collection with stored credentials.
+	v2 := vault.Open(dir)
+	e2, err := New(dir, web, v2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e2.Status().Phase != Done {
-		t.Fatal("state not restored")
+	if st, _ := e2.Source(ida); st.Phase != NeedPassword {
+		t.Fatalf("want paused after restart, got %s", st.Phase)
 	}
-	if err := e2.Cancel(); err != nil {
+	if !e2.VaultState().Locked {
+		t.Fatal("vault must start locked")
+	}
+	if err := e2.Unlock("wrong password!!"); err == nil {
+		t.Fatal("wrong admin password must fail")
+	}
+	if err := e2.Unlock(admin); err != nil {
 		t.Fatal(err)
 	}
-	if e2.Status().Phase != Idle {
-		t.Fatal("cancel did not reset")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if st, _ := e2.Source(ida); st.Phase == Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("source not resumed after unlock")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if st, _ := e2.Source(idb); st.Phase != Done {
+		t.Fatal("finished source must stay done")
+	}
+	if err := e2.Remove(ida); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sources", ida)); !os.IsNotExist(err) {
+		t.Fatal("removed source data must be deleted")
+	}
+	if _, err := v2.Get(ida); err == nil {
+		t.Fatal("removed source credentials must be deleted")
+	}
+	e2.Shutdown()
+}
+
+func TestMemoryOnlyWithoutVault(t *testing.T) {
+	pollEvery = 100 * time.Millisecond
+	a := newSim(t)
+	defer a.close()
+	dir := t.TempDir()
+	web := &report.Server{Listen: "127.0.0.1:0", PublicHost: "127.0.0.1", TTL: time.Hour}
+	e, _ := New(dir, web, nil)
+	id, err := e.Add(context.Background(), a.cfg(), a.pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPolls(t, e, id, 1)
+	e.Shutdown()
+	b, _ := os.ReadFile(filepath.Join(dir, "sources", id, "state.gob"))
+	if strings.Contains(string(b), a.pass) {
+		t.Fatal("password must never be persisted")
+	}
+	e2, _ := New(dir, web, nil)
+	if err := e2.Resume(context.Background(), id, ""); err == nil {
+		t.Fatal("resume without vault needs a password")
+	}
+	if err := e2.Resume(context.Background(), id, a.pass); err != nil {
+		t.Fatal(err)
+	}
+	e2.Shutdown()
+}
+
+func TestLegacyMigration(t *testing.T) {
+	dir := t.TempDir()
+	st := state{Version: 1, Config: Config{Host: "vc-old", Profile: "balanced", Duration: 24 * time.Hour}, Phase: Done, Report: filepath.Join(dir, "reports", "r.pdf")}
+	if err := writeState(filepath.Join(dir, "state.gob"), &st); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(filepath.Join(dir, "reports"), 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "reports", "r.pdf"), []byte("%PDF"), 0o600)
+	e, err := New(dir, &report.Server{TTL: time.Hour}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcs := e.Summary().Sources
+	if len(srcs) != 1 || srcs[0].Config.Host != "vc-old" || srcs[0].Phase != Done {
+		t.Fatalf("legacy analysis not migrated: %+v", srcs)
+	}
+	if _, err := os.Stat(srcs[0].ReportFile); err != nil {
+		t.Fatalf("legacy report not moved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.gob")); !os.IsNotExist(err) {
+		t.Fatal("legacy state must be removed after migration")
 	}
 }
 
 func TestUnreadableStateIsPreserved(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(dir+"/state.gob", []byte("not gob"), 0o600); err != nil {
+	_ = os.MkdirAll(filepath.Join(dir, "sources", "0123abcd"), 0o700)
+	if err := os.WriteFile(filepath.Join(dir, "sources", "0123abcd", "state.gob"), []byte("not gob"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(dir, &report.Server{TTL: time.Hour})
+	e, err := New(dir, &report.Server{TTL: time.Hour}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Status().Phase != Idle {
-		t.Fatal("expected fresh state")
+	if len(e.Summary().Sources) != 0 {
+		t.Fatal("unreadable source must be skipped")
 	}
-	m, _ := filepath.Glob(dir + "/state.gob.unreadable-*")
+	m, _ := filepath.Glob(filepath.Join(dir, "sources", "0123abcd", "state.gob.unreadable-*"))
 	if len(m) != 1 {
 		t.Fatal("unreadable state must be kept")
 	}
