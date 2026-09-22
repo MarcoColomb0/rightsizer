@@ -11,7 +11,7 @@ rightsizer watches one or more VMware vCenters for 24 hours to 14 days, compares
 
 - **VM rightsizing:** oversized and undersized vCPU and memory, with a confidence level for each recommendation.
 - **Refresh sizing:** required GHz, cores, RAM and hosts per cluster, including an HA spare. The figures are hardware-neutral, so you can apply them to any server model.
-- **Peak-aware sizing:** VMs rarely peak at the same time. rightsizer measures how much less CPU a cluster needs than the sum of its VMs' peaks (the diversity factor), and shows an hour-of-week demand heatmap. It also finds VMs that peak together on the same host (spread them with DRS) and VMs that peak at different times (good host mates).
+- **Peak-aware sizing:** VMs rarely peak at the same time. rightsizer measures how much less CPU a cluster needs than the sum of its VMs' peaks (the diversity factor), and shows an hour-of-week demand heatmap. It also shows which VMs peak together and which peak at different times.
 - **Day-one preview:** when an analysis starts, rightsizer imports the last 14 days of history stored in vCenter, so first results are available within minutes. Each VM switches to precise 20-second data once it has 24 hours of it.
 - **History accuracy check:** during the run, rightsizer keeps reading vCenter's 5-minute averages and compares them with the 20-second data for the same period. It shows how much the averages understate utilisation, lists bursty VMs whose peaks the averages hide, and warns when the 14 days before the analysis had a clearly higher peak than the window itself.
 - **Hidden waste:** orphaned virtual disks that no VM uses, VMs wider than a NUMA node, VMs slowed down by CPU co-stop, idle VMs, VMs powered off for the whole window, old snapshots, and thick disks that are mostly empty.
@@ -135,7 +135,7 @@ Every five minutes rightsizer collects the 20-second real-time samples of each p
 - **vCPU** = ceil(vCPU × CPU percentile ÷ target), minimum 1.
 - **Memory** = active-memory percentile × headroom, rounded up to 1 GB. It never goes below the memory floor (as a share of current memory), 1 GB for Linux or 2 GB for Windows.
 - **Clusters:** CPU is sized from the demand percentile ÷ host CPU target, and memory from the recommended VM memory plus 5% ÷ host memory target. One HA host is added.
-- **Diversity factor:** the sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of their combined demand. VMs on the same host whose demand correlates at 0.8 or more are reported as co-peaking.
+- **Diversity factor:** the sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of their combined demand. VMs whose demand correlates at 0.8 or more are reported as peaking together. Placement is left to DRS.
 - **History preview:** each stored interval is read only for the period it alone covers (finest first), and every sample is weighted by the time it represents.
 
 Active memory can understate what databases and JVMs reserve. Check memory reductions against in-guest metrics before applying them.

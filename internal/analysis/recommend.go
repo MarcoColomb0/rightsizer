@@ -49,7 +49,6 @@ const (
 	Orphan     Kind = "Orphaned disk"
 	WideVM     Kind = "Spans NUMA nodes"
 	CoStopHigh Kind = "High co-stop"
-	CoPeak     Kind = "Co-peaking VMs"
 )
 
 type Severity int
@@ -350,7 +349,6 @@ func Analyze(in Input) *Result {
 		c.Peaks = peaks(c, vmsByCluster[name], st, p)
 		c.Points = Downsample(c.Points, 336)
 		c.EarlierPeak = earlierPeak(in.History, name, start, c.CapMHz)
-		r.Findings = append(r.Findings, coPeakFindings(*c)...)
 		r.Clusters = append(r.Clusters, *c)
 		t.Hosts += c.Hosts
 		t.HostsNeeded += c.HostsNeeded

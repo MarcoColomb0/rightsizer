@@ -439,16 +439,16 @@ func (d *doc) peaks() {
 		d.heatmap(c.Peaks)
 		for _, g := range c.Peaks.CoPeak {
 			d.font("", 8.5)
-			d.color(cWarn)
-			d.text(4.4, fmt.Sprintf("Peak together on %s (r %.2f): %s. Consider a DRS anti-affinity rule.", g.Host, g.R, strings.Join(g.VMs, ", ")))
+			d.color(cInk)
+			d.text(4.4, fmt.Sprintf("Peak together (r %.2f): %s. Their peaks add up; check whether they share a schedule, such as a batch window.", g.R, strings.Join(g.VMs, ", ")))
 		}
 		for i, p := range c.Peaks.Complementary {
 			if i == 5 {
 				break
 			}
 			d.font("", 8.5)
-			d.color(cInk)
-			d.text(4.4, fmt.Sprintf("Complementary (r %.2f): %s and %s peak at different times and share a host well.", p.R, p.A, p.B))
+			d.color(cMuted)
+			d.text(4.4, fmt.Sprintf("Peak at different times (r %.2f): %s and %s. Pairs like these are why the cluster needs less than the sum of its peaks.", p.R, p.A, p.B))
 		}
 		d.Ln(2)
 	}
@@ -727,7 +727,7 @@ func (d *doc) method() {
 		"Confidence: high with ≥ 72 h of data covering ≥ 80% of the window (capped at 7 days), medium with ≥ 24 h, low otherwise.",
 		"NUMA: a VM is flagged when its vCPUs exceed the cores of one physical NUMA node, or its memory exceeds one node's memory.",
 		"Co-stop: average co-stop of 3% or more per vCPU on a multi-vCPU VM means it waits for enough free cores; fewer vCPUs make it faster.",
-		"Peak-aware sizing: diversity = sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of the VMs' combined demand. VMs whose 30-minute demand correlates at 0.8 or more on the same host are reported as co-peaking; -0.4 or less as complementary.",
+		"Peak-aware sizing: diversity = sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of the VMs' combined demand. VMs whose 30-minute demand correlates at 0.8 or more are reported as peaking together, -0.4 or less as peaking at different times. Placement is left to DRS.",
 		"Orphaned disks: .vmdk files on accessible datastores that no registered VM, template or snapshot references. First-class disks and replication, HA and vSAN system folders are ignored. Needs the Browse datastore privilege.",
 		"History accuracy: during the window, vCenter's finest stored interval is read every hour and compared with the 20-second data for the same period, for VMs with at least 24 hours of both.",
 		"Preview: until a VM has 24 hours of 20-second data, results use vCenter's stored history for the previous 14 days, read at the finest interval available for each period and weighted by the time each sample covers.",

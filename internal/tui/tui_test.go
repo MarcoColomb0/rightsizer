@@ -58,7 +58,7 @@ func (f *fake) ChangePassword(o, n string) error {
 
 func peaksDemo() *analysis.Peaks {
 	pk := &analysis.Peaks{SumPeakMHz: 420000, CombinedPeakMHz: 262000, Diversity: 1.6, NaiveHosts: 7, AwareHosts: 4,
-		CoPeak:        []analysis.Group{{VMs: []string{"sql-01", "sql-02"}, Host: "esx03", R: 0.93}},
+		CoPeak:        []analysis.Group{{VMs: []string{"sql-01", "sql-02"}, R: 0.93}},
 		Complementary: []analysis.Pair{{A: "batch-01", B: "web-01", R: -0.71}}}
 	for d := 0; d < 7; d++ {
 		for h := 0; h < 24; h++ {
@@ -146,7 +146,7 @@ func TestHomeAndSource(t *testing.T) {
 	m = send(t, m, keys1("2"))
 	view(t, m, "sql-01")
 	m = send(t, m, keys1("3"))
-	view(t, m, "diversity", "1.60×", "if sized on the sum of peaks", "Peak together on esx03", "batch-01 + web-01", "Mon")
+	view(t, m, "diversity", "1.60×", "if sized on the sum of peaks", "Peak together (r 0.93)", "batch-01 + web-01", "Mon")
 	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.scr != scrHome {
 		t.Fatal("esc must go back home")

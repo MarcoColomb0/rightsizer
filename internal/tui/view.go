@@ -550,13 +550,13 @@ func peaksView(r *analysis.Result) string {
 			b.WriteString("  " + sMuted.Render(day) + "   " + sAccent.Render(row.String()) + "\n")
 		}
 		for _, g := range pk.CoPeak {
-			b.WriteString("  " + sWarn.Render("Peak together on "+g.Host+": ") + strings.Join(g.VMs, ", ") + "\n")
+			b.WriteString("  " + sWarn.Render(fmt.Sprintf("Peak together (r %.2f): ", g.R)) + strings.Join(g.VMs, ", ") + "\n")
 		}
 		for i, p := range pk.Complementary {
 			if i == 3 {
 				break
 			}
-			b.WriteString("  " + sMuted.Render(fmt.Sprintf("Good host mates (r %.2f): ", p.R)) + p.A + " + " + p.B + "\n")
+			b.WriteString("  " + sMuted.Render(fmt.Sprintf("Peak at different times (r %.2f): ", p.R)) + p.A + " + " + p.B + "\n")
 		}
 		b.WriteString("\n")
 	}

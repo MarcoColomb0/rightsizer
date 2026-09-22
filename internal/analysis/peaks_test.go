@@ -84,14 +84,11 @@ func TestPearsonAndDiversity(t *testing.T) {
 	if pk == nil || pk.Diversity < 1.3 || pk.NaiveHosts <= pk.AwareHosts {
 		t.Fatalf("anti-correlated VMs must give a diversity factor above 1, got %+v", pk)
 	}
-	if len(pk.CoPeak) != 1 || len(pk.CoPeak[0].VMs) != 2 || pk.CoPeak[0].Host != "h1" {
-		t.Fatalf("a and b peak together on h1: %+v", pk.CoPeak)
+	if len(pk.CoPeak) != 1 || len(pk.CoPeak[0].VMs) != 2 {
+		t.Fatalf("a and b peak together: %+v", pk.CoPeak)
 	}
 	if len(pk.Complementary) == 0 {
 		t.Fatal("a and c are complementary")
-	}
-	if fs := coPeakFindings(ClusterResult{Name: "cl", Peaks: pk}); len(fs) != 1 || fs[0].Kind != CoPeak {
-		t.Fatalf("want one co-peak finding, got %+v", fs)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
@@ -19,9 +18,8 @@ type Pair struct {
 }
 
 type Group struct {
-	VMs  []string
-	Host string
-	R    float64
+	VMs []string
+	R   float64
 }
 
 type Peaks struct {
@@ -150,7 +148,7 @@ func correlate(pk *Peaks, loads []vmLoad) {
 			if !ok {
 				continue
 			}
-			if r >= coPeakR && loads[i].vm.Host == loads[j].vm.Host {
+			if r >= coPeakR {
 				parent[find(i)] = find(j)
 				strongest[i] = max(strongest[i], r)
 				strongest[j] = max(strongest[j], r)
@@ -168,7 +166,7 @@ func correlate(pk *Peaks, loads []vmLoad) {
 		}
 		g := groups[root]
 		if g == nil {
-			g = &Group{Host: loads[i].vm.Host}
+			g = &Group{}
 			groups[root] = g
 		}
 		g.VMs = append(g.VMs, loads[i].vm.Name)
@@ -215,28 +213,6 @@ func pearson(a, b *VMStats) (float64, bool) {
 		return 0, false
 	}
 	return cov / math.Sqrt(vx*vy), true
-}
-
-func coPeakFindings(c ClusterResult) []Finding {
-	if c.Peaks == nil {
-		return nil
-	}
-	var fs []Finding
-	for _, g := range c.Peaks.CoPeak {
-		name := g.VMs[0]
-		if len(g.VMs) > 1 {
-			name = fmt.Sprintf("%s + %d more", g.VMs[0], len(g.VMs)-1)
-		}
-		fs = append(fs, Finding{
-			VM: name, Cluster: c.Name, Kind: CoPeak, Severity: Medium,
-			Current:   fmt.Sprintf("%d VMs peak together on %s", len(g.VMs), g.Host),
-			Suggested: "Spread with a DRS anti-affinity rule",
-			Detail: fmt.Sprintf("%s rise and fall together (correlation %.2f) and run on the same host, so their peaks stack. "+
-				"A VM-VM anti-affinity rule lets DRS place them on different hosts.", strings.Join(g.VMs, ", "), g.R),
-			Confidence: "medium",
-		})
-	}
-	return fs
 }
 
 func hourName(d, h int) string {
