@@ -30,8 +30,12 @@ export GNUPGHOME="$WORK/gnupg"
 mkdir -p "$GNUPGHOME"
 chmod 0700 "$GNUPGHOME"
 gpg --batch --quiet --import "$HERE/flatcar-signing-key.asc"
-gpg --batch --status-fd 1 --verify "$WORK/flatcar.img.sig" "$WORK/flatcar.img" 2>/dev/null |
-	grep -q "^\[GNUPG:\] VALIDSIG ${FLATCAR_KEY_FINGERPRINT} " || { echo "Flatcar image signature invalid" >&2; exit 1; }
+sigstatus="$(gpg --batch --status-fd 1 --verify "$WORK/flatcar.img.sig" "$WORK/flatcar.img" 2>/dev/null || true)"
+if ! awk -v fp="$FLATCAR_KEY_FINGERPRINT" '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && $NF == fp { ok = 1 } END { exit !ok }' <<<"$sigstatus"; then
+	echo "Flatcar image signature invalid:" >&2
+	echo "$sigstatus" >&2
+	exit 1
+fi
 
 mkdir -p "$WORK/bundle" "$WORK/ign"
 docker save "$ENGINE" | gzip -1 >"$WORK/bundle/rightsizer-image.tar.gz"

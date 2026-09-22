@@ -26,8 +26,12 @@ fetch -o "$WORK/flatcar.ova.sig" "$base/flatcar_production_vmware_ova.ova.sig"
 export GNUPGHOME="$WORK/gnupg"
 mkdir -m 0700 "$GNUPGHOME"
 gpg --batch --quiet --import "$HERE/flatcar-signing-key.asc"
-gpg --batch --status-fd 1 --verify "$WORK/flatcar.ova.sig" "$WORK/flatcar.ova" 2>/dev/null |
-	grep -q "^\[GNUPG:\] VALIDSIG ${FLATCAR_KEY_FINGERPRINT} " || { echo "Flatcar image signature invalid" >&2; exit 1; }
+sigstatus="$(gpg --batch --status-fd 1 --verify "$WORK/flatcar.ova.sig" "$WORK/flatcar.ova" 2>/dev/null || true)"
+if ! awk -v fp="$FLATCAR_KEY_FINGERPRINT" '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && $NF == fp { ok = 1 } END { exit !ok }' <<<"$sigstatus"; then
+	echo "Flatcar image signature invalid:" >&2
+	echo "$sigstatus" >&2
+	exit 1
+fi
 echo "✓ Flatcar image signature verified"
 
 tar -xf "$WORK/flatcar.ova" -C "$WORK" --wildcards '*.vmdk'
