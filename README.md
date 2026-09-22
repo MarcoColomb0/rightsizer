@@ -52,8 +52,26 @@ When the window ends, the final PDF is built and a download link appears in the 
 | `rightsizer status` | one-line status |
 | `rightsizer export [file.pdf]` | copy the latest report to the host |
 | `rightsizer logs` | collector logs |
-| `rightsizer update` | pull the latest image, keeping collected data |
+| `rightsizer update` | update launcher and container to the latest release |
+| `rightsizer backup` | back up collected data to the `rightsizer-backups` volume |
 | `rightsizer uninstall` | remove container, wrapper and (optionally) data |
+
+## Updates
+
+When a new release is published, `rightsizer` offers it on start:
+
+1. **Launcher** (the `rightsizer` command on the host): a `[Y/n]` prompt before the console opens. The new `install.sh` is checked against the release `SHA256SUMS` and, if the GitHub CLI is logged in, against its GitHub build attestation.
+2. **Container** (collector and console): a `[Y/n]` dialog in the console, also reachable with `u`. The upgrade then runs on the host with step-by-step progress:
+   1. download the new image while the collector keeps running (provenance verified when the GitHub CLI is logged in)
+   2. stop the collector cleanly, so every sample is written to disk
+   3. back up `/data` to the `rightsizer-backups` volume (last 3 kept)
+   4. start the new version
+   5. check it is healthy and loaded the saved analysis
+   6. otherwise remove it, restore the backup and restart the previous container
+
+The container never gets access to the Docker socket; upgrades are always performed by the launcher. An analysis in progress continues after an upgrade once the vCenter password is entered again. vCenter keeps one hour of real-time samples, so no data is lost. Disable checks with `--no-update-check` or `RIGHTSIZER_NO_UPDATE_CHECK=1`. The release lookup is one anonymous request to the GitHub API, cached for six hours.
+
+Releases are cut by pushing a `vX.Y.Z` tag: CI tests, builds and scans the multi-arch image, attests it, then publishes the release with `install.sh` and `SHA256SUMS`.
 
 ## How it sizes
 

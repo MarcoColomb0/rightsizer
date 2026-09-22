@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/MarcoColomb0/rightsizer/internal/backup"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -39,6 +40,14 @@ func main() {
 		err = printStatus()
 	case "export":
 		err = export()
+	case "backup", "restore":
+		if len(os.Args) != 3 {
+			err = fmt.Errorf("usage: rightsizer %s <file.tar.gz>", cmd)
+		} else if cmd == "backup" {
+			err = backup.Create(dataDir(), os.Args[2])
+		} else {
+			err = backup.Restore(os.Args[2], dataDir())
+		}
 	case "version", "--version", "-v":
 		fmt.Println("rightsizer", version)
 	case "help", "--help", "-h":
@@ -60,6 +69,8 @@ Usage:
   rightsizer [tui]   open the interactive console (default)
   rightsizer status  print a one-line status
   rightsizer export  write the latest PDF report to stdout
+  rightsizer backup <file>   archive the data directory
+  rightsizer restore <file>  replace the data directory from an archive
   rightsizer daemon  run the collector (used by the container)
   rightsizer version
 `)
@@ -117,8 +128,14 @@ func runTUI() error {
 	if _, err := c.Status(); err != nil {
 		return fmt.Errorf("daemon not running (%v). Start it with: docker start rightsizer", err)
 	}
-	_, err := tea.NewProgram(tui.New(c), tea.WithAltScreen()).Run()
-	return err
+	m, err := tea.NewProgram(tui.New(c, version, os.Getenv("RIGHTSIZER_LATEST"), os.Getenv("RIGHTSIZER_RELEASE_URL")), tea.WithAltScreen()).Run()
+	if err != nil {
+		return err
+	}
+	if m.(tui.Model).UpgradeRequested() {
+		os.Exit(tui.ExitUpgrade)
+	}
+	return nil
 }
 
 func printStatus() error {

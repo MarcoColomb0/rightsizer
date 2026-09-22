@@ -26,6 +26,8 @@ func (m Model) View() string {
 		body = m.viewResume()
 	case scrDash:
 		body = m.viewDash()
+	case scrUpdate:
+		body = m.viewUpdate()
 	}
 	out := m.header() + "\n\n" + body
 	if m.err != "" {
@@ -38,6 +40,12 @@ func (m Model) header() string {
 	l := sTitle.Render("rightsizer") + sMuted.Render("  vSphere rightsizing · read-only")
 	if m.st != nil && m.st.Config.Host != "" && m.st.Phase != engine.Idle {
 		l += sMuted.Render("  ·  ") + m.st.Config.Host + "  " + phaseBadge(m.st.Phase)
+	}
+	if m.updateAvailable() && m.scr != scrUpdate {
+		l += "  " + sWarn.Render("↑ "+m.latest+" available")
+		if m.scr == scrDash {
+			l += sMuted.Render(" (u)")
+		}
 	}
 	return l
 }
@@ -113,6 +121,33 @@ func wrapFP(fp string) string {
 	return fp
 }
 
+func (m Model) viewUpdate() string {
+	var b strings.Builder
+	b.WriteString(sBold.Render("Update available") + "\n\n")
+	b.WriteString(sLabel.Render("Installed") + m.current + "\n")
+	b.WriteString(sLabel.Render("Latest") + sAccent.Render(m.latest) + "\n")
+	if m.notes != "" {
+		b.WriteString(sLabel.Render("Release notes") + m.notes + "\n")
+	}
+	b.WriteString("\n")
+	steps := []string{
+		"Download the new image while the collector keeps running",
+		"Stop the collector cleanly so all samples are saved",
+		"Back up collected data and reports",
+		"Start the new version and check the data loaded",
+		"Roll back automatically if anything fails",
+	}
+	for i, s := range steps {
+		b.WriteString(sMuted.Render(fmt.Sprintf("  %d. ", i+1)) + s + "\n")
+	}
+	if m.st != nil && (m.st.Phase == engine.Running || m.st.Phase == engine.NeedPassword) {
+		b.WriteString("\n" + sWarn.Render("An analysis is in progress. It continues after the upgrade; you will be asked for the vCenter password again.") + "\n")
+		b.WriteString(sMuted.Render("vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap.") + "\n")
+	}
+	b.WriteString("\n" + sBold.Render("Upgrade now?") + " " + sAccent.Render("[Y/n]"))
+	return b.String()
+}
+
 func (m Model) viewResume() string {
 	s := m.st
 	var b strings.Builder
@@ -169,11 +204,18 @@ func (m Model) viewDash() string {
 	case m.confirm == "cancel":
 		b.WriteString(sBad.Render("Discard this analysis and all collected data? [y/N]"))
 	case s.Phase == engine.Running:
-		b.WriteString(keys("1/2", "tabs", "p", "interim PDF", "f", "finish now", "x", "discard", "q", "detach"))
+		k := []string{"1/2", "tabs", "p", "interim PDF", "f", "finish now", "x", "discard"}
+		if m.updateAvailable() {
+			k = append(k, "u", "upgrade")
+		}
+		b.WriteString(keys(append(k, "q", "detach")...))
 	default:
 		k := []string{"1/2", "tabs", "p", "publish PDF"}
 		if s.Share != nil {
 			k = append(k, "s", "stop sharing")
+		}
+		if m.updateAvailable() {
+			k = append(k, "u", "upgrade")
 		}
 		b.WriteString(keys(append(k, "n", "new analysis", "q", "quit")...))
 	}

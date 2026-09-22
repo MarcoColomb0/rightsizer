@@ -46,7 +46,12 @@ type Config struct {
 	Clusters    []string
 }
 
+// stateVersion is bumped whenever state changes incompatibly, so an older
+// release never overwrites data written by a newer one.
+const stateVersion = 1
+
 type state struct {
+	Version   int
 	Config    Config
 	Phase     Phase
 	Started   time.Time
@@ -92,7 +97,11 @@ type Engine struct {
 func New(dir string, web *report.Server) (*Engine, error) {
 	e := &Engine{dir: dir, web: web, st: state{Phase: Idle}}
 	if err := e.load(); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("could not load previous state, starting fresh", "err", err)
+		kept := fmt.Sprintf("%s.unreadable-%s", e.statePath(), time.Now().Format("20060102-150405"))
+		if rerr := os.Rename(e.statePath(), kept); rerr != nil {
+			return nil, fmt.Errorf("cannot load state (%v) and cannot preserve it: %w", err, rerr)
+		}
+		slog.Error("previous state unreadable, kept a copy and starting fresh", "err", err, "copy", kept)
 		e.st = state{Phase: Idle}
 	}
 	if e.st.Phase == Running {
@@ -469,6 +478,7 @@ func (e *Engine) writePDF(res *analysis.Result) (string, error) {
 func (e *Engine) statePath() string { return filepath.Join(e.dir, "state.gob") }
 
 func (e *Engine) save() error {
+	e.st.Version = stateVersion
 	tmp := e.statePath() + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -494,7 +504,15 @@ func (e *Engine) load() error {
 		return err
 	}
 	defer f.Close()
-	return gob.NewDecoder(f).Decode(&e.st)
+	var st state
+	if err := gob.NewDecoder(f).Decode(&st); err != nil {
+		return err
+	}
+	if st.Version > stateVersion {
+		return fmt.Errorf("state written by a newer rightsizer (format %d > %d)", st.Version, stateVersion)
+	}
+	e.st = st
+	return nil
 }
 
 func filterClusters(inv *vc.Inventory, keep []string) *vc.Inventory {

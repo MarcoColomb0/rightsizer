@@ -9,7 +9,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -X main.version=${VERSION}" \
       -o /out/rightsizer ./cmd/rightsizer \
- && mkdir -p /out/data
+ && mkdir -p /out/data /out/backup
 
 FROM scratch
 LABEL org.opencontainers.image.title="rightsizer" \
@@ -20,6 +20,7 @@ LABEL org.opencontainers.image.title="rightsizer" \
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/rightsizer /rightsizer
 COPY --from=build --chown=65532:65532 --chmod=700 /out/data /data
+COPY --from=build --chown=65532:65532 --chmod=700 /out/backup /backup
 ENV RIGHTSIZER_DATA=/data PATH=/
 VOLUME /data
 EXPOSE 8443

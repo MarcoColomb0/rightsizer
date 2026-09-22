@@ -15,6 +15,7 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/version"
 )
 
 type screen int
@@ -26,7 +27,11 @@ const (
 	scrBusy
 	scrDash
 	scrResume
+	scrUpdate
 )
+
+// ExitUpgrade tells the host launcher that the user asked to upgrade.
+const ExitUpgrade = 42
 
 const (
 	fHost = iota
@@ -84,10 +89,17 @@ type Model struct {
 	prog    progress.Model
 	confirm string
 	pass    textinput.Model
+
+	current, latest, notes string
+	asked, upgrade         bool
 }
 
-func New(c *ipc.Client) Model {
-	m := Model{c: c, durIdx: 3, profIdx: 1}
+func (m Model) UpgradeRequested() bool { return m.upgrade }
+
+func (m Model) updateAvailable() bool { return version.Newer(m.latest, m.current) }
+
+func New(c *ipc.Client, current, latest, notes string) Model {
+	m := Model{c: c, durIdx: 3, profIdx: 1, current: current, latest: latest, notes: notes}
 	ph := []string{"vcenter.example.local", "readonly@vsphere.local", "", "all clusters (or: prod-01, prod-02)"}
 	for i := range m.in {
 		t := textinput.New()
@@ -147,7 +159,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.st = msg.s
-		if m.scr != scrBusy && m.scr != scrCert {
+		if !m.asked && m.updateAvailable() {
+			m.asked = true
+			m.scr = scrUpdate
+		}
+		if m.scr != scrBusy && m.scr != scrCert && m.scr != scrUpdate {
 			m.route()
 		}
 		m.fillTable()
@@ -197,6 +213,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateResume(msg)
 		case scrDash:
 			return m.updateDash(msg)
+		case scrUpdate:
+			switch msg.String() {
+			case "y", "Y", "enter":
+				m.upgrade = true
+				return m, tea.Quit
+			case "n", "N", "esc":
+				m.scr = scrLoading
+				m.route()
+			}
+			return m, nil
 		case scrLoading:
 			if msg.String() == "q" {
 				return m, tea.Quit
@@ -363,6 +389,11 @@ func (m Model) updateDash(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q", "esc":
 		return m, tea.Quit
+	case "u":
+		if m.updateAvailable() {
+			m.scr = scrUpdate
+		}
+		return m, nil
 	case "1":
 		m.tab = 0
 		return m, nil

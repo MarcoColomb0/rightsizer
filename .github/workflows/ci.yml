@@ -19,7 +19,12 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test -race ./...
-      - run: shellcheck install.sh
+      - name: shellcheck installer and launcher
+        run: |
+          shellcheck install.sh
+          awk "/^cat >\"\\\$\{BIN\}.new\" <<'WRAPPER'/{f=1;next} /^WRAPPER\$/{f=0} f" install.sh > launcher.sh
+          test -s launcher.sh
+          shellcheck launcher.sh
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
@@ -79,3 +84,21 @@ jobs:
           subject-name: ghcr.io/marcocolomb0/rightsizer
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  release:
+    needs: image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: sha256sum install.sh > SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: install.sh
+      - run: gh release create "$GITHUB_REF_NAME" install.sh SHA256SUMS --verify-tag --generate-notes --title "rightsizer $GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}

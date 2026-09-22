@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -114,5 +115,23 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if e2.Status().Phase != Idle {
 		t.Fatal("cancel did not reset")
+	}
+}
+
+func TestUnreadableStateIsPreserved(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/state.gob", []byte("not gob"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(dir, &report.Server{TTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Status().Phase != Idle {
+		t.Fatal("expected fresh state")
+	}
+	m, _ := filepath.Glob(dir + "/state.gob.unreadable-*")
+	if len(m) != 1 {
+		t.Fatal("unreadable state must be kept")
 	}
 }
