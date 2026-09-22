@@ -94,9 +94,20 @@ echo "✓ root and core cannot log in"
 
 out="$(ssh_try admin "$PW" -s sftp || true)"
 [[ "$out" != *"sftp>"* ]] || fail "sftp must not be available"
-out="$(SSHPASS="$PW" timeout 20 sshpass -e ssh -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	-o ExitOnForwardFailure=yes -N -L 127.0.0.1:18080:127.0.0.1:22 admin@127.0.0.1 2>&1 || true)"
-[[ "$out" == *"forwarding"* || "$out" == *"refused"* || "$out" == *"denied"* || "$out" == *"failed"* ]] || fail "port forwarding must be refused: $out"
+sshopts=(-p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password -o PubkeyAuthentication=no)
+out="$(SSHPASS="$PW" timeout 30 sshpass -e ssh "${sshopts[@]}" -o ExitOnForwardFailure=yes -N -R 127.0.0.1:18081:127.0.0.1:22 admin@127.0.0.1 2>&1 || true)"
+[[ "$out" == *"forwarding failed"* ]] || fail "remote port forwarding must be refused: $out"
+SSHPASS="$PW" timeout 30 sshpass -e ssh "${sshopts[@]}" -N -L 127.0.0.1:18080:127.0.0.1:22 admin@127.0.0.1 2>"$WORK/fwd.log" &
+fwd=$!
+sleep 8
+timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 && head -n1 <&3' >"$WORK/fwd.out" 2>/dev/null || true
+sleep 2
+kill "$fwd" 2>/dev/null || true
+wait "$fwd" 2>/dev/null || true
+if grep -q "SSH-2.0" "$WORK/fwd.out"; then
+	fail "local port forwarding must be refused"
+fi
+grep -qiE "open failed|prohibited|refused" "$WORK/fwd.log" || fail "local port forwarding was not rejected: $(cat "$WORK/fwd.log")"
 echo "✓ no sftp, no port forwarding"
 
 if timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/8443" 2>/dev/null; then
