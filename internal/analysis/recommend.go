@@ -77,6 +77,11 @@ type Finding struct {
 	MemMB      int
 	Bytes      int64
 	Confidence string
+	// Metric is the measured value behind a performance finding, such as
+	// co-stop % or CPU p99, used to rank the worst cases first.
+	Metric float64
+	// Impact orders findings within a priority level, most critical first.
+	Impact float64
 }
 
 type VMResult struct {
@@ -379,13 +384,41 @@ func Analyze(in Input) *Result {
 	}
 	slices.SortFunc(r.Clusters, func(a, b ClusterResult) int { return strings.Compare(a.Name, b.Name) })
 	slices.SortFunc(r.VMs, func(a, b VMResult) int { return strings.Compare(a.Name, b.Name) })
-	slices.SortStableFunc(r.Findings, func(a, b Finding) int {
+	for i := range r.Findings {
+		r.Findings[i].Impact = impact(r.Findings[i])
+	}
+	SortFindings(r.Findings)
+	return r
+}
+
+// impact scores a finding in one unit so different kinds can be compared:
+// 1 vCPU = 1 point, 4 GB of memory = 1 point, 100 GB of disk = 1 point.
+// Problems that hurt performance today rank above savings.
+func impact(f Finding) float64 {
+	score := math.Abs(float64(f.VCPU)) + math.Abs(float64(f.MemMB))/4096 + float64(f.Bytes)/(100<<30)
+	switch f.Kind {
+	case CPUUnder, MemUnder, CoStopHigh:
+		return 1000 + f.Metric + score
+	case WideVM:
+		return 500 + f.Metric + score
+	}
+	return score
+}
+
+// SortFindings orders by priority, then by impact, then by name.
+func SortFindings(fs []Finding) {
+	slices.SortStableFunc(fs, func(a, b Finding) int {
 		if a.Severity != b.Severity {
 			return int(b.Severity) - int(a.Severity)
 		}
+		if a.Impact != b.Impact {
+			if a.Impact > b.Impact {
+				return -1
+			}
+			return 1
+		}
 		return strings.Compare(a.VM, b.VM)
 	})
-	return r
 }
 
 // mergePoints joins the historical and real-time demand timelines.
@@ -427,6 +460,7 @@ func placementFindings(vm vc.VM, vr VMResult, s *VMStats, h vc.Host) []Finding {
 		if wideCPU || wideMem {
 			f := base
 			f.Kind, f.Severity = WideVM, Medium
+			f.Metric = float64(vm.VCPU) / float64(max(perNode, 1))
 			f.Current = fmt.Sprintf("%d vCPU / %s on %d-core, %s NUMA nodes", vm.VCPU, gib(vm.MemMB), perNode, human(memNode))
 			switch {
 			case wideCPU && vr.RecVCPU <= perNode && !wideMem:
@@ -449,6 +483,7 @@ func placementFindings(vm vc.VM, vr VMResult, s *VMStats, h vc.Host) []Finding {
 		f.Current = fmt.Sprintf("%d vCPU, co-stop %.1f%%", vm.VCPU, cs)
 		f.Suggested = fmt.Sprintf("Reduce to %d vCPU", min(vr.RecVCPU, vm.VCPU-1))
 		f.Detail = "The hypervisor often has to pause some vCPUs while it waits for enough free cores to run them all together. Fewer vCPUs will make this VM faster, not slower."
+		f.Metric = cs * 10
 		fs = append(fs, f)
 	}
 	return fs
@@ -505,6 +540,7 @@ func rightsize(vm vc.VM, s *VMStats, p Profile, window float64) (VMResult, []Fin
 		f.Current, f.Suggested = fmt.Sprintf("%d vCPU", vm.VCPU), fmt.Sprintf("%d vCPU", vr.RecVCPU)
 		f.Detail = fmt.Sprintf("CPU p99 %.0f%% of provisioned, peak %.0f%%.", s.CPU.Pct(99), s.CPU.Max)
 		f.VCPU = vm.VCPU - vr.RecVCPU
+		f.Metric = s.CPU.Pct(99)
 		fs = append(fs, f)
 	case needCPU < vm.VCPU:
 		vr.RecVCPU = needCPU
@@ -537,6 +573,7 @@ func rightsize(vm vc.VM, s *VMStats, p Profile, window float64) (VMResult, []Fin
 		f.Current, f.Suggested = gib(vm.MemMB), gib(vr.RecMemMB)
 		f.Detail = fmt.Sprintf("Active memory p95 %.0f%% of configured.", s.Mem.Pct(95))
 		f.MemMB = vm.MemMB - vr.RecMemMB
+		f.Metric = s.Mem.Pct(95)
 		fs = append(fs, f)
 	case need <= vm.MemMB-1024:
 		vr.RecMemMB = need

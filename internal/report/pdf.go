@@ -600,6 +600,8 @@ func (d *doc) findingSummary() {
 	type agg struct {
 		n, vcpu, mem int
 		bytes        int64
+		sev          analysis.Severity
+		impact       float64
 	}
 	by := map[analysis.Kind]*agg{}
 	for _, f := range d.r.Findings {
@@ -609,6 +611,8 @@ func (d *doc) findingSummary() {
 			by[f.Kind] = a
 		}
 		a.n++
+		a.sev = max(a.sev, f.Severity)
+		a.impact += f.Impact
 		a.vcpu += f.VCPU
 		a.mem += f.MemMB
 		a.bytes += f.Bytes
@@ -617,7 +621,16 @@ func (d *doc) findingSummary() {
 	for k := range by {
 		kinds = append(kinds, string(k))
 	}
-	sort.Strings(kinds)
+	sort.SliceStable(kinds, func(i, j int) bool {
+		a, b := by[analysis.Kind(kinds[i])], by[analysis.Kind(kinds[j])]
+		if a.sev != b.sev {
+			return a.sev > b.sev
+		}
+		if a.impact != b.impact {
+			return a.impact > b.impact
+		}
+		return kinds[i] < kinds[j]
+	})
 	rows := [][]string{}
 	for _, k := range kinds {
 		a := by[analysis.Kind(k)]
@@ -653,7 +666,8 @@ func (d *doc) findings() {
 		}
 		byVM[f.VM] = append(byVM[f.VM], f)
 	}
-	sort.Strings(names)
+	// Findings are already ordered by criticality; VMs keep the order of
+	// their most critical finding.
 	for _, n := range names {
 		fs := byVM[n]
 		if d.GetY() > 262 {

@@ -2,7 +2,6 @@ package analysis
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -63,11 +62,6 @@ func Merge(rs []*Result) *Result {
 		}
 	}
 	out.VCenter = fmt.Sprintf("%d vCenters: %s", len(rs), strings.Join(names, ", "))
-	slices.SortStableFunc(out.Findings, func(a, b Finding) int {
-		if a.Severity != b.Severity {
-			return int(b.Severity) - int(a.Severity)
-		}
-		return strings.Compare(a.VM, b.VM)
-	})
+	SortFindings(out.Findings)
 	return out
 }

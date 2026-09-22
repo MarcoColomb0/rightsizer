@@ -84,3 +84,29 @@ func TestStorageFindings(t *testing.T) {
 		t.Fatalf("got %+v", fs)
 	}
 }
+
+func TestFindingsOrderedByCriticality(t *testing.T) {
+	fs := []Finding{
+		{VM: "a-small", Kind: CPUOver, Severity: High, VCPU: 2},
+		{VM: "b-disk", Kind: Orphan, Severity: High, Bytes: 2 << 40},
+		{VM: "c-costop", Kind: CoStopHigh, Severity: High, Metric: 40},
+		{VM: "d-big", Kind: CPUOver, Severity: High, VCPU: 12},
+		{VM: "e-under", Kind: CPUUnder, Severity: High, VCPU: -2, Metric: 97},
+		{VM: "f-medium", Kind: MemOver, Severity: Medium, MemMB: 256 << 10},
+		{VM: "g-low", Kind: CPUOver, Severity: Low, VCPU: 1},
+	}
+	for i := range fs {
+		fs[i].Impact = impact(fs[i])
+	}
+	SortFindings(fs)
+	var got []string
+	for _, f := range fs {
+		got = append(got, f.VM)
+	}
+	want := []string{"e-under", "c-costop", "b-disk", "d-big", "a-small", "f-medium", "g-low"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order\n got %v\nwant %v", got, want)
+		}
+	}
+}
