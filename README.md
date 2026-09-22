@@ -1,103 +1,116 @@
 # rightsizer
 
-Read-only vSphere rightsizing. rightsizer watches a vCenter for 24 hours to 14 days, compares what every VM is **provisioned** with what it actually **uses**, and tells you how much CPU, memory, storage and how many hosts you really need, so hardware refreshes can be sized on evidence rather than on current allocations.
+**Size your next hardware refresh on what your VMs use, not on what they were given.**
 
-Open source by [Marco Colombo](https://marco.wf) · Apache-2.0
+rightsizer watches a VMware vCenter for 24 hours to 14 days, compares each VM's provisioned vCPU, memory and storage with its measured use, and tells you what the environment actually needs. It never changes anything in vCenter.
 
-## What it finds
+[![ci](https://github.com/MarcoColomb0/rightsizer/actions/workflows/ci.yml/badge.svg)](https://github.com/MarcoColomb0/rightsizer/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-| Area | Finding |
-| --- | --- |
-| VM rightsizing | Oversized and undersized vCPU and memory, from 20-second samples, with confidence levels |
-| Cluster / refresh sizing | Required GHz, cores, RAM and hosts per cluster (N+1), hardware-neutral |
-| Waste | Idle VMs, VMs powered off for the whole window |
-| Storage | Old snapshots and their size, thick disks with mostly empty guest file systems |
+## Features
 
-Results are live in the terminal console while data is collected, and exported as a PDF report.
+- **VM rightsizing:** oversized and undersized vCPU and memory, with a confidence level for each recommendation.
+- **Refresh sizing:** required GHz, cores, RAM and hosts per cluster, including an HA spare. The figures are hardware-neutral, so you can apply them to any server model.
+- **Waste:** idle VMs, VMs powered off for the whole window, old snapshots, and thick disks that are mostly empty.
+- **Live console:** a terminal UI shows progress and findings while data is collected.
+- **PDF report:** executive summary, per-cluster charts, prioritised findings and methodology.
 
-## Safety
+## Requirements
 
-* **It never changes anything.** Every vSphere API call goes through an allowlist of read-only methods (property retrieval and performance queries); anything else is refused inside the tool before it is sent. A test proves `PowerOffVM_Task` and `Destroy_Task` are blocked.
-* Use a vCenter user with the built-in **Read-only** role. No other privilege is needed.
-* Self-signed vCenter certificates are supported through trust on first use: the console shows the SHA-256 fingerprint, and once you accept it that certificate is pinned. Any other certificate is refused.
-* The password is kept in memory only, never on disk. If the container restarts, the console asks for it again. After three rejected logins collection pauses, so a changed password cannot lock the account.
-* PDF downloads use a temporary HTTPS server that starts only when a report is ready, serves a single file behind a random 192-bit link with a fresh self-signed certificate, and stops after 24 hours.
-* The image is built `FROM scratch` and holds only the static binary and a CA bundle (about 6 MB compressed). The container runs as a non-root user with a read-only root file system, all capabilities dropped and `no-new-privileges`.
+- A Linux host with [Docker Engine](https://docs.docker.com/engine/install/). Follow the guide for your distribution: [Ubuntu](https://docs.docker.com/engine/install/ubuntu/), [Debian](https://docs.docker.com/engine/install/debian/), [RHEL](https://docs.docker.com/engine/install/rhel/), [Fedora](https://docs.docker.com/engine/install/fedora/) or [others](https://docs.docker.com/engine/install/#supported-platforms).
+- HTTPS access from that host to vCenter on port 443.
+- A vCenter user with the built-in **Read-only** role.
 
 ## Install
-
-Requirements: a Linux host with Docker, HTTPS access to vCenter (443), and outbound access to `ghcr.io` or GitHub.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MarcoColomb0/rightsizer/main/install.sh | sudo bash
 ```
 
-Options: `--port 8443` (report download port), `--host name` (host name used in download links), `--bind 127.0.0.1`, `--tag v1.0.0`, `--build` (build the image from source).
+| Option | Default | |
+| --- | --- | --- |
+| `--port` | `8443` | HTTPS port for report downloads |
+| `--host` | primary IP | host name or IP used in download links |
+| `--bind` | `0.0.0.0` | address the download port listens on |
+| `--tag` | latest release | release to install, e.g. `v0.1.0` |
+| `--build` | | build the image from source instead of pulling it |
+| `--no-update-check` | | never look for new releases |
 
-## Use
+## Usage
 
 ```bash
 rightsizer
 ```
 
-1. Enter vCenter, a read-only user, the password, the duration (14 days recommended) and a sizing profile.
-2. Check the certificate fingerprint and press `y`.
-3. Press `q` to detach. Collection continues in the background. Run `rightsizer` again at any time to follow progress.
+1. Enter the vCenter address, the read-only user and password, the duration and a sizing profile.
+2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
+3. Press `q` to leave. Collection continues in the background; run `rightsizer` again to check on it.
 
-When the window ends, the final PDF is built and a download link appears in the console. Press `p` at any time for an interim report.
+When the window ends, the final report is built and a download link appears in the console. Press `p` at any time for an interim report.
 
 | Command | |
 | --- | --- |
 | `rightsizer` | open the console |
 | `rightsizer status` | one-line status |
-| `rightsizer export [file.pdf]` | copy the latest report to the host |
-| `rightsizer logs` | collector logs |
-| `rightsizer update` | update launcher and container to the latest release |
-| `rightsizer backup` | back up collected data to the `rightsizer-backups` volume |
-| `rightsizer uninstall` | remove container, wrapper and (optionally) data |
+| `rightsizer export [file.pdf]` | copy the latest report to the current directory |
+| `rightsizer backup` | back up collected data |
+| `rightsizer update` | update to the latest release |
+| `rightsizer logs` | show collector logs |
+| `rightsizer uninstall` | remove rightsizer (collected data optional) |
+
+## Security
+
+- **Read-only by construction.** Every vSphere call passes an allowlist of read methods, and anything else is blocked before it leaves the process. A test checks that power and delete operations are refused.
+- **Certificate pinning.** Self-signed vCenter certificates are accepted only after you confirm their SHA-256 fingerprint. After that, any other certificate is refused.
+- **No stored passwords.** The vCenter password is kept only in memory. After a restart the console asks for it again. Collection pauses after three failed logins, so a changed password can't lock the account.
+- **Short-lived downloads.** The report server starts only when a report is ready. It serves one file over HTTPS behind a random 192-bit link and stops after 24 hours.
+- **Minimal container.** The image is built `FROM scratch` and holds only a static binary and a CA bundle, about 6 MB compressed. It runs as a non-root user with a read-only file system, no capabilities and `no-new-privileges`.
+- **Supply chain.** Images are multi-arch and scanned with Trivy. Each release has SBOM and provenance attestations, and the installer is published with checksums.
+
+Please report vulnerabilities privately through [GitHub security advisories](https://github.com/MarcoColomb0/rightsizer/security/advisories/new).
 
 ## Updates
 
-When a new release is published, `rightsizer` offers it on start:
+When a release is available, `rightsizer` offers it on start:
 
-1. **Launcher** (the `rightsizer` command on the host): a `[Y/n]` prompt before the console opens. The new `install.sh` is checked against the release `SHA256SUMS` and, if the GitHub CLI is logged in, against its GitHub build attestation.
-2. **Container** (collector and console): a `[Y/n]` dialog in the console, also reachable with `u`. The upgrade then runs on the host with step-by-step progress:
-   1. download the new image while the collector keeps running (provenance verified when the GitHub CLI is logged in)
-   2. stop the collector cleanly, so every sample is written to disk
-   3. back up `/data` to the `rightsizer-backups` volume (last 3 kept)
-   4. start the new version
-   5. check it is healthy and loaded the saved analysis
-   6. otherwise remove it, restore the backup and restart the previous container
+- **Launcher:** a `[Y/n]` prompt before the console opens. The new installer is checked against the release checksums and, if the GitHub CLI is logged in, against its build attestation.
+- **Container:** a `[Y/n]` dialog in the console (also `u`). The upgrade shows its progress and protects your data:
+  1. downloads the new image while collection continues
+  2. stops the collector cleanly
+  3. backs up the data (the last three backups are kept)
+  4. starts the new version
+  5. checks that it is healthy and has loaded the saved analysis
+  6. otherwise restores the backup and the previous version automatically
 
-The container never gets access to the Docker socket; upgrades are always performed by the launcher. An analysis in progress continues after an upgrade once the vCenter password is entered again. vCenter keeps one hour of real-time samples, so no data is lost. Disable checks with `--no-update-check` or `RIGHTSIZER_NO_UPDATE_CHECK=1`. The release lookup is one anonymous request to the GitHub API, cached for six hours.
+A running analysis continues after an upgrade once you re-enter the vCenter password. vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap.
 
-Releases are cut by pushing a `vX.Y.Z` tag: CI tests, builds and scans the multi-arch image, attests it, then publishes the release with `install.sh` and `SHA256SUMS`.
+## How recommendations are calculated
 
-## How it sizes
+Every five minutes rightsizer collects the 20-second real-time samples of each powered-on VM and host. It stores them in fixed-size histograms, so memory use stays flat over a 14-day window and every percentile covers every sample.
 
-Every 5 minutes rightsizer downloads the 20-second real-time samples of every powered-on VM and host and folds them into fixed-size histograms, so memory use stays constant however long the window is, and percentiles use every sample instead of vCenter's averaged roll-ups.
-
-| Profile | Percentile | vCPU target | Memory headroom | Minimum memory kept | Host CPU / memory target |
+| Profile | Percentile | vCPU target | Memory headroom | Memory floor | Host CPU / memory target |
 | --- | --- | --- | --- | --- | --- |
 | conservative | p99 | 60% | +40% | 50% | 60% / 80% |
 | balanced | p95 | 70% | +25% | 35% | 70% / 85% |
 | aggressive | p95 | 80% | +10% | 25% | 80% / 90% |
 
-* **vCPU** = ceil(vCPU × CPU percentile ÷ target), minimum 1. CPU p99 ≥ 90% means undersized.
-* **Memory** = active memory percentile × headroom, rounded up to 1 GB, never below the minimum kept, 1 GB (Linux) or 2 GB (Windows).
-* **Clusters**: CPU need = cluster demand percentile ÷ host CPU target; memory need = recommended VM memory + 5% ÷ host memory target; plus one HA host.
+- **vCPU** = ceil(vCPU × CPU percentile ÷ target), minimum 1.
+- **Memory** = active-memory percentile × headroom, rounded up to 1 GB. It never goes below the memory floor (as a share of current memory), 1 GB for Linux or 2 GB for Windows.
+- **Clusters:** CPU is sized from the demand percentile ÷ host CPU target, and memory from the recommended VM memory plus 5% ÷ host memory target. One HA host is added.
 
-Active memory can understate what databases and JVMs reserve, so check memory reductions with in-guest metrics before you apply them.
+Active memory can understate what databases and JVMs reserve. Check memory reductions against in-guest metrics before applying them.
 
-## Build from source
+## Development
 
 ```bash
-make test        # unit and integration tests against the govmomi vCenter simulator
-make build       # ./rightsizer
-make image       # rightsizer:local
-make demo-pdf    # sample report from synthetic data
+make test       # unit tests and integration tests against the govmomi vCenter simulator
+make build      # ./rightsizer
+make image      # rightsizer:local
+make demo-pdf   # sample report from synthetic data
 ```
+
+Releases are published by pushing a `vX.Y.Z` tag.
 
 ## License
 
-Apache License 2.0. Copyright Marco Colombo.
+[Apache License 2.0](LICENSE) © [Marco Colombo](https://marco.wf)

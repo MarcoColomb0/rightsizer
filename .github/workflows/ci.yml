@@ -25,7 +25,7 @@ jobs:
           awk "/^cat >\"\\\$\{BIN\}.new\" <<'WRAPPER'/{f=1;next} /^WRAPPER\$/{f=0} f" install.sh > launcher.sh
           test -s launcher.sh
           shellcheck launcher.sh
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
       - uses: golang/govulncheck-action@v1
@@ -70,7 +70,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ github.ref_name }}
-      - uses: aquasecurity/trivy-action@0.33.1
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/marcocolomb0/rightsizer@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
