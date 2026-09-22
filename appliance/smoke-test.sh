@@ -13,7 +13,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${WORK:-$(mktemp -d)}"
 PW='ci & admin password'
 PORT=2222
-cleanup() { [ -f "$WORK/qemu.pid" ] && kill "$(cat "$WORK/qemu.pid")" 2>/dev/null || true; }
+cleanup() {
+	if [ -f "$WORK/qemu.pid" ]; then
+		kill "$(cat "$WORK/qemu.pid")" 2>/dev/null || true
+	fi
+}
 trap cleanup EXIT
 
 base="https://stable.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"

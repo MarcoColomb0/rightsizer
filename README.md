@@ -2,7 +2,7 @@
 
 **Size your next hardware refresh on what your VMs use, not on what they were given.**
 
-rightsizer watches a VMware vCenter for 24 hours to 14 days, compares each VM's provisioned vCPU, memory and storage with its measured use, and tells you what the environment actually needs. It never changes anything in vCenter.
+rightsizer watches one or more VMware vCenters for 24 hours to 14 days, compares each VM's provisioned vCPU, memory and storage with its measured use, and tells you what the environment actually needs. It never changes anything in vCenter.
 
 [![ci](https://github.com/MarcoColomb0/rightsizer/actions/workflows/ci.yml/badge.svg)](https://github.com/MarcoColomb0/rightsizer/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -12,19 +12,49 @@ rightsizer watches a VMware vCenter for 24 hours to 14 days, compares each VM's 
 - **VM rightsizing:** oversized and undersized vCPU and memory, with a confidence level for each recommendation.
 - **Refresh sizing:** required GHz, cores, RAM and hosts per cluster, including an HA spare. The figures are hardware-neutral, so you can apply them to any server model.
 - **Waste:** idle VMs, VMs powered off for the whole window, old snapshots, and thick disks that are mostly empty.
+- **Several vCenters:** analyse many at once, with a report per vCenter or one combined report.
 - **Live console:** a terminal UI shows progress and findings while data is collected.
 - **PDF report:** executive summary, per-cluster charts, prioritised findings and methodology.
 
-## Requirements
+## Deploy
 
-- A Linux host with [Docker Engine](https://docs.docker.com/engine/install/). Follow the guide for your distribution: [Ubuntu](https://docs.docker.com/engine/install/ubuntu/), [Debian](https://docs.docker.com/engine/install/debian/), [RHEL](https://docs.docker.com/engine/install/rhel/), [Fedora](https://docs.docker.com/engine/install/fedora/) or [others](https://docs.docker.com/engine/install/#supported-platforms).
-- HTTPS access from that host to vCenter on port 443.
-- A vCenter user with the built-in **Read-only** role.
+Pick one of the two options.
 
-## Install
+|  | Appliance (OVA) | Docker on Linux |
+| --- | --- | --- |
+| Runs on | vSphere 6.7 U2 or later | any Linux host with Docker Engine |
+| Console | `ssh admin@appliance` from Windows, macOS or Linux | `rightsizer` on the Docker host |
+| vCenter credentials | stored encrypted, collection resumes after a reboot once an admin logs in | kept in memory only, re-entered after a restart |
+| Internet access | optional (updates only) | needed to pull the image |
+
+### Option A: appliance
+
+1. Download `rightsizer-vX.Y.Z.ova` from the [latest release](https://github.com/MarcoColomb0/rightsizer/releases/latest).
+2. In vCenter, choose **Deploy OVF Template** and select the file.
+3. On **Customize template**, set:
+   - **Administrator password:** at least 12 characters.
+   - **Network:** hostname, IPv4 address with prefix (leave empty for DHCP), gateway, DNS, search domain and NTP.
+   - **Preferences:** time zone, and whether to check GitHub for updates.
+4. Power on the VM. Its console shows the address and the SSH key fingerprint.
+5. From any workstation, run:
+
+   ```bash
+   ssh admin@<appliance-address>
+   ```
+
+   Check that the key fingerprint matches the one on the VM console, then enter the administrator password.
+
+The appliance needs 2 vCPU, 2 GB of memory and about 14 GB of thin-provisioned disk. It needs HTTPS access to each vCenter. Workstations reach it on port 22 (console) and port 443 (report downloads).
+
+Change the administrator password from the console (`c`) after the first login. Changing it later in the vApp options resets it and clears the stored vCenter credentials. That is the recovery path if the password is lost.
+
+### Option B: Docker on Linux
+
+Requirements: [Docker Engine](https://docs.docker.com/engine/install/). Follow the guide for your distribution: [Ubuntu](https://docs.docker.com/engine/install/ubuntu/), [Debian](https://docs.docker.com/engine/install/debian/), [RHEL](https://docs.docker.com/engine/install/rhel/), [Fedora](https://docs.docker.com/engine/install/fedora/) or [others](https://docs.docker.com/engine/install/#supported-platforms).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MarcoColomb0/rightsizer/main/install.sh | sudo bash
+rightsizer
 ```
 
 | Option | Default | |
@@ -32,57 +62,59 @@ curl -fsSL https://raw.githubusercontent.com/MarcoColomb0/rightsizer/main/instal
 | `--port` | `8443` | HTTPS port for report downloads |
 | `--host` | primary IP | host name or IP used in download links |
 | `--bind` | `0.0.0.0` | address the download port listens on |
-| `--tag` | latest release | release to install, e.g. `v0.1.0` |
+| `--tag` | latest release | release to install, e.g. `v0.2.0` |
 | `--build` | | build the image from source instead of pulling it |
 | `--no-update-check` | | never look for new releases |
-
-## Usage
-
-```bash
-rightsizer
-```
-
-1. Enter the vCenter address, the read-only user and password, the duration and a sizing profile.
-2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
-3. Press `q` to leave. Collection continues in the background; run `rightsizer` again to check on it.
-
-When the window ends, the final report is built and a download link appears in the console. Press `p` at any time for an interim report.
 
 | Command | |
 | --- | --- |
 | `rightsizer` | open the console |
-| `rightsizer status` | one-line status |
+| `rightsizer status` | short status |
 | `rightsizer export [file.pdf]` | copy the latest report to the current directory |
 | `rightsizer backup` | back up collected data |
 | `rightsizer update` | update to the latest release |
-| `rightsizer logs` | show collector logs |
+| `rightsizer logs` | show engine logs |
 | `rightsizer uninstall` | remove rightsizer (collected data optional) |
+
+## Using the console
+
+1. Press `a` to add a vCenter. Enter its address, a user with the built-in **Read-only** role, the duration and a sizing profile.
+2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
+3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
+
+On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, and `s` stops sharing reports. Inside a vCenter, `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+
+A PDF is offered for download on a temporary HTTPS link shown in the console. When an analysis ends, its final report is shared automatically.
 
 ## Security
 
 - **Read-only by construction.** Every vSphere call passes an allowlist of read methods, and anything else is blocked before it leaves the process. A test checks that power and delete operations are refused.
 - **Certificate pinning.** Self-signed vCenter certificates are accepted only after you confirm their SHA-256 fingerprint. After that, any other certificate is refused.
-- **No stored passwords.** The vCenter password is kept only in memory. After a restart the console asks for it again. Collection pauses after three failed logins, so a changed password can't lock the account.
-- **Short-lived downloads.** The report server starts only when a report is ready. It serves one file over HTTPS behind a random 192-bit link and stops after 24 hours.
-- **Minimal container.** The image is built `FROM scratch` and holds only a static binary and a CA bundle, about 6 MB compressed. It runs as a non-root user with a read-only file system, no capabilities and `no-new-privileges`.
-- **Supply chain.** Images are multi-arch and scanned with Trivy. Each release has SBOM and provenance attestations, and the installer is published with checksums.
+- **Credentials.** On the appliance, vCenter passwords are encrypted with XChaCha20-Poly1305. The key is derived from the administrator password with Argon2id, and it exists only in memory after an administrator logs in. In the Docker install, passwords are never written to disk. Collection pauses after three failed vCenter logins, so a changed password can't lock the account.
+- **SSH console.** Only the `admin` user can log in, only with the administrator password. A terminal is required, and commands, sftp, agent and port forwarding are refused. Only modern key exchanges and ciphers are offered. An address is locked out after five failed attempts in 15 minutes.
+- **Appliance host.** Built on [Flatcar Container Linux](https://www.flatcar.org), whose OS image is signature-verified at build time. It has an immutable `/usr`, automatic A/B OS updates that apply on the next reboot, and no user accounts you can log in to. Host SSH, every login prompt, the serial and debug shells, console autologin and Ctrl-Alt-Del are disabled. The VM console only shows status. Kernel and network settings are hardened, and guest copy, paste and device changes are disabled.
+- **Short-lived downloads.** The report server listens only while a report is shared. Each report has its own random 192-bit link, a fresh self-signed certificate is used, and links expire after 24 hours.
+- **Minimal container.** The engine image is built `FROM scratch` and holds only a static binary and a CA bundle, about 6 MB compressed. It runs as a non-root user with a read-only file system, no capabilities and `no-new-privileges`, and it never gets access to the Docker socket.
+- **Supply chain.** CI tests every change, boots the appliance in QEMU and attacks its console, and scans images with Trivy. Each release has SBOM and provenance attestations, and the installer and OVA are published with checksums.
+
+A vSphere administrator who can manage the appliance VM can read its disks. On the appliance, stored vCenter credentials stay encrypted, but collected utilisation data does not.
 
 Please report vulnerabilities privately through [GitHub security advisories](https://github.com/MarcoColomb0/rightsizer/security/advisories/new).
 
 ## Updates
 
-When a release is available, `rightsizer` offers it on start:
+When a release is available, the console offers it with a `[Y/n]` prompt, and `u` reopens it. Every upgrade protects your data:
 
-- **Launcher:** a `[Y/n]` prompt before the console opens. The new installer is checked against the release checksums and, if the GitHub CLI is logged in, against its build attestation.
-- **Container:** a `[Y/n]` dialog in the console (also `u`). The upgrade shows its progress and protects your data:
-  1. downloads the new image while collection continues
-  2. stops the collector cleanly
-  3. backs up the data (the last three backups are kept)
-  4. starts the new version
-  5. checks that it is healthy and has loaded the saved analysis
-  6. otherwise restores the backup and the previous version automatically
+1. download the new version while collection continues
+2. stop the engine cleanly
+3. back up the data (the last three backups are kept)
+4. start the new version
+5. check that it is healthy and has loaded every saved analysis
+6. otherwise restore the backup and the previous version automatically
 
-A running analysis continues after an upgrade once you re-enter the vCenter password. vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap.
+On the appliance, the engine asks the host to perform the upgrade. Your session disconnects while the engine restarts; reconnect after about a minute. The OS updates itself, and the update applies on the next reboot. In the Docker install, the `rightsizer` launcher performs the upgrade and first offers an update for itself.
+
+vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap in the data.
 
 ## How recommendations are calculated
 
@@ -109,7 +141,7 @@ make image      # rightsizer:local
 make demo-pdf   # sample report from synthetic data
 ```
 
-Releases are published by pushing a `vX.Y.Z` tag.
+`appliance/smoke-test.sh` boots the appliance in QEMU, and `appliance/build.sh` builds the OVA. Releases are published by pushing a `vX.Y.Z` tag.
 
 ## License
 
