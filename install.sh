@@ -118,14 +118,14 @@ create() {
 
 case "${1:-tui}" in
 tui)
-	docker exec -it -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" "$C" rightsizer tui
+	docker exec -it -e TERM="${TERM:-xterm-256color}" -e COLORTERM="${COLORTERM:-}" "$C" /rightsizer tui
 	;;
 status | version)
-	docker exec "$C" rightsizer "$1"
+	docker exec "$C" /rightsizer "$1"
 	;;
 export)
 	out="${2:-rightsizer-report-$(date +%Y%m%d-%H%M).pdf}"
-	docker exec "$C" rightsizer export >"$out.tmp" && mv "$out.tmp" "$out" && chmod 600 "$out" && echo "saved $out"
+	docker exec "$C" /rightsizer export >"$out.tmp" && mv "$out.tmp" "$out" && chmod 600 "$out" && echo "saved $out"
 	;;
 logs)
 	docker logs -f --tail 200 "$C"
@@ -175,10 +175,10 @@ info "Starting container"
 "$BIN" _create
 
 for _ in $(seq 1 20); do
-	docker exec rightsizer rightsizer status >/dev/null 2>&1 && break
+	docker exec rightsizer /rightsizer status >/dev/null 2>&1 && break
 	sleep 0.5
 done
-docker exec rightsizer rightsizer status >/dev/null 2>&1 || die "container did not start, check: docker logs rightsizer"
+docker exec rightsizer /rightsizer status >/dev/null 2>&1 || die "container did not start, check: docker logs rightsizer"
 
 echo
 bold "rightsizer is running."

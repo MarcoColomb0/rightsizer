@@ -22,7 +22,7 @@ Results are live in the terminal console while data is collected, and exported a
 * Self-signed vCenter certificates are supported through trust on first use: the console shows the SHA-256 fingerprint, and once you accept it that certificate is pinned. Any other certificate is refused.
 * The password is kept in memory only, never on disk. If the container restarts, the console asks for it again. After three rejected logins collection pauses, so a changed password cannot lock the account.
 * PDF downloads use a temporary HTTPS server that starts only when a report is ready, serves a single file behind a random 192-bit link with a fresh self-signed certificate, and stops after 24 hours.
-* The container runs as a non-root user on a distroless image with a read-only root file system, all capabilities dropped and `no-new-privileges`.
+* The image is built `FROM scratch` and holds only the static binary and a CA bundle (about 6 MB compressed). The container runs as a non-root user with a read-only root file system, all capabilities dropped and `no-new-privileges`.
 
 ## Install
 

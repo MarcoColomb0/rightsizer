@@ -20,6 +20,9 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: shellcheck install.sh
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
       - uses: golang/govulncheck-action@v1
         with:
           go-version-file: go.mod
@@ -62,6 +65,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ github.ref_name }}
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ghcr.io/marcocolomb0/rightsizer@${{ steps.build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - run: |
+          docker pull -q ghcr.io/marcocolomb0/rightsizer@${{ steps.build.outputs.digest }}
+          docker image ls --format '{{.Repository}} {{.Size}}' ghcr.io/marcocolomb0/rightsizer >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/attest-build-provenance@v2
         with:
           subject-name: ghcr.io/marcocolomb0/rightsizer
