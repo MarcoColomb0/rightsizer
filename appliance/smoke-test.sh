@@ -64,7 +64,7 @@ fail() {
 echo "› waiting for the appliance to boot"
 banner=""
 for _ in $(seq 1 180); do
-	banner="$(timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT && head -c 64 <&3" 2>/dev/null | tr -d '\r' || true)"
+	banner="$(timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORT && head -n1 <&3" 2>/dev/null | tr -d '\r' || true)"
 	[[ "$banner" == SSH-2.0-* ]] && break
 	sleep 5
 done

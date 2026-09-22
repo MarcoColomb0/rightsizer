@@ -4,6 +4,15 @@ ignition:
   config:
     merge:
       - local: appliance.ign
+systemd:
+  units:
+    - name: rightsizer.service
+      dropins:
+        - name: 90-ci-console.conf
+          contents: |
+            [Service]
+            StandardOutput=journal+console
+            StandardError=journal+console
 storage:
   files:
     - path: /etc/rightsizer/ovfenv.xml
