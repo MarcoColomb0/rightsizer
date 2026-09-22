@@ -65,6 +65,8 @@ func (s Severity) String() string {
 }
 
 type Finding struct {
+	UUID       string
+	Path       string
 	VM         string
 	Cluster    string
 	Kind       Kind
@@ -94,6 +96,7 @@ type VMResult struct {
 	Hours      float64
 	Confidence string
 	Preview    bool
+	Excluded   bool
 }
 
 type ClusterResult struct {
@@ -150,20 +153,22 @@ type Result struct {
 	HistoryFrom time.Time
 	Orphans     []vc.OrphanDisk
 	WasteNote   string
+	Excluded    []Excluded
 }
 
 // Input is everything one analysis is computed from. History holds vCenter's
 // rolled-up statistics for the period before the analysis started.
 type Input struct {
-	Inv       *vc.Inventory
-	RT        *Store
-	History   *Store
-	Orphans   []vc.OrphanDisk
-	WasteNote string
-	Profile   Profile
-	Start     time.Time
-	End       time.Time
-	Planned   time.Duration
+	Inv        *vc.Inventory
+	RT         *Store
+	History    *Store
+	Orphans    []vc.OrphanDisk
+	WasteNote  string
+	Exclusions []Exclusion
+	Profile    Profile
+	Start      time.Time
+	End        time.Time
+	Planned    time.Duration
 }
 
 // fullDay is the number of 20-second samples in 24 hours.
@@ -210,6 +215,7 @@ func Analyze(in Input) *Result {
 		r.HistoryFrom = in.History.Anchor
 	}
 	window := hoursBetween(start, end)
+	matched := map[string][]string{}
 	cl := map[string]*ClusterResult{}
 	getCl := func(n string) *ClusterResult {
 		c := cl[n]
@@ -246,18 +252,32 @@ func Analyze(in Input) *Result {
 			continue
 		}
 		t.Storage += vm.Committed
-		r.Findings = append(r.Findings, storageFindings(vm, end)...)
+		xs := exclusions(in.Exclusions).forVM(vm.UUID, vm.Name)
+		for _, x := range xs {
+			matched[x.ID] = append(matched[x.ID], vm.Name)
+		}
+		keep := func(fs []Finding) []Finding {
+			out := fs[:0]
+			for _, f := range fs {
+				f.UUID = vm.UUID
+				if !coversAny(xs, f.Kind) {
+					out = append(out, f)
+				}
+			}
+			return out
+		}
+		r.Findings = append(r.Findings, keep(storageFindings(vm, end))...)
 		s, preview := in.vmStats(vm.Ref)
 		if !vm.PowerOn {
 			t.Off++
 			if s == nil || s.Samples == 0 {
-				r.Findings = append(r.Findings, Finding{
+				r.Findings = append(r.Findings, keep([]Finding{{
 					VM: vm.Name, Cluster: vm.Cluster, Kind: PoweredOff, Severity: sevBytes(vm.Committed),
 					Current:   fmt.Sprintf("off, %s on disk", human(vm.Committed)),
 					Suggested: "Archive / delete",
 					Detail:    fmt.Sprintf("Powered off for the whole analysis window (%d vCPU, %s configured). Still consumes datastore capacity and may count toward licensing. Confirm with the owner first.", vm.VCPU, gib(vm.MemMB)),
 					Bytes:     vm.Committed, Confidence: conf(window, window),
-				})
+				}})...)
 				continue
 			}
 		} else {
@@ -285,7 +305,16 @@ func Analyze(in Input) *Result {
 			}
 			r.Preview = true
 		}
-		fs = append(fs, placementFindings(vm, vr, s, hosts[vm.Host])...)
+		fs = keep(append(fs, placementFindings(vm, vr, s, hosts[vm.Host])...))
+		if len(xs) > 0 {
+			vr.Excluded = true
+			if coversAny(xs, CPUOver) || coversAny(xs, CPUUnder) || coversAny(xs, Idle) {
+				vr.RecVCPU = vm.VCPU
+			}
+			if coversAny(xs, MemOver) || coversAny(xs, MemUnder) || coversAny(xs, Idle) {
+				vr.RecMemMB = vm.MemMB
+			}
+		}
 		r.VMs = append(r.VMs, vr)
 		r.Findings = append(r.Findings, fs...)
 		c.RecVCPU += vr.RecVCPU
@@ -322,7 +351,21 @@ func Analyze(in Input) *Result {
 		t.Cores += c.Cores
 		t.NeedCores += c.NeedCores
 	}
-	r.Findings = append(r.Findings, orphanFindings(in.Orphans)...)
+	var orphans []vc.OrphanDisk
+	for _, o := range in.Orphans {
+		if x, ok := exclusions(in.Exclusions).forDisk(o.Path); ok {
+			matched[x.ID] = append(matched[x.ID], o.Path)
+			continue
+		}
+		orphans = append(orphans, o)
+	}
+	r.Orphans = orphans
+	r.Findings = append(r.Findings, orphanFindings(orphans)...)
+	for _, x := range in.Exclusions {
+		if names := matched[x.ID]; len(names) > 0 {
+			r.Excluded = append(r.Excluded, Excluded{Exclusion: x, Matched: names})
+		}
+	}
 	for _, f := range r.Findings {
 		switch f.Kind {
 		case PoweredOff, OldSnap, ThickDisk, Orphan:
@@ -415,7 +458,7 @@ func orphanFindings(os []vc.OrphanDisk) []Finding {
 			age = fmt.Sprintf(", last changed %s", o.Modified.Format("2006-01-02"))
 		}
 		fs = append(fs, Finding{
-			VM: o.Path, Cluster: o.Datastore, Kind: Orphan, Severity: sevBytes(size),
+			VM: o.Path, Path: o.Path, Cluster: o.Datastore, Kind: Orphan, Severity: sevBytes(size),
 			Current:   fmt.Sprintf("%s on %s%s", human(size), o.Datastore, age),
 			Suggested: "Verify and delete",
 			Detail:    "No VM or template registered in this vCenter uses this disk. Check that it does not belong to a VM in another vCenter, a backup or replication product, or a VM that is being restored before deleting it.",

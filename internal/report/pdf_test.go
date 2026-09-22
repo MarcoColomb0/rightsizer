@@ -87,6 +87,10 @@ func demo() *analysis.Result {
 		st.Clusters[name] = cs
 	}
 	r := analysis.Analyze(analysis.Input{Inv: inv, RT: st, Profile: analysis.ProfileByName("balanced"), Start: start, End: end, Planned: 14 * 24 * time.Hour,
+		Exclusions: []analysis.Exclusion{
+			{ID: "1", Name: "dmz01-db07", Reason: "Vendor requirement", Note: "Vendor sizing guide for the appliance requires 8 vCPU and 32 GB.", Created: end.Add(-40 * 24 * time.Hour)},
+			{ID: "2", Name: "prod01-web*", Kinds: []analysis.Kind{analysis.MemOver}, Reason: "Planned change", Note: "Web tier moves to containers in Q1; no resizing before.", Created: end.Add(-100 * 24 * time.Hour), ReviewBy: end.Add(-10 * 24 * time.Hour)},
+		},
 		Orphans: []vc.OrphanDisk{{Datastore: "ds-prod-01", Path: "[ds-prod-01] old-sql02/old-sql02.vmdk", Size: 412 << 30, Modified: end.Add(-200 * 24 * time.Hour)}}})
 	r.Final = true
 	r.VCenter = "vcsa01.corp.local — VMware vCenter Server 8.0.3 build-24322831"

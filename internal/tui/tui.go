@@ -30,6 +30,8 @@ const (
 	scrResume
 	scrSettings
 	scrUpdate
+	scrExclude
+	scrExclusions
 )
 
 // ExitUpgrade tells the host launcher that the user asked to upgrade.
@@ -118,6 +120,12 @@ type Model struct {
 	pwFocus int
 
 	asked, upgrade bool
+
+	ex     excludeForm
+	exNote textinput.Model
+	exName textinput.Model
+	excl   []analysis.Exclusion
+	exSel  int
 }
 
 func New(b ipc.Backend, opt Options) Model {
@@ -130,6 +138,9 @@ func New(b ipc.Backend, opt Options) Model {
 		m.pw[i] = input("", true)
 	}
 	m.pass = input("", true)
+	m.exNote = input("e.g. vendor sizing guide requires 16 vCPU / 64 GB", false)
+	m.exNote.CharLimit = 500
+	m.exName = input("citrix-*", false)
 	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(sAccent))
 	m.prog = progress.New(progress.WithSolidFill(string(accent.Dark)), progress.WithoutPercentage())
 	m.tbl = table.New(table.WithFocused(true))
@@ -239,6 +250,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case doneMsg:
 		return m.done(msg)
+	case exclusionsMsg:
+		if msg.err == nil {
+			m.excl = msg.xs
+			m.exSel = min(m.exSel, max(len(m.excl)-1, 0))
+		}
+		return m, nil
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
@@ -258,6 +275,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.keySettings(msg)
 		case scrUpdate:
 			return m.keyUpdate(msg)
+		case scrExclude:
+			return m.keyExclude(msg)
+		case scrExclusions:
+			return m.keyExclusions(msg)
 		case scrLoading:
 			if msg.String() == "q" {
 				return m, tea.Quit
@@ -279,6 +300,8 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 			m.pass.Focus()
 		case "password":
 			m.scr = scrSettings
+		case "exclude":
+			m.scr = scrExclude
 		default:
 			m.scr = m.back
 		}
@@ -302,6 +325,12 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.scr, m.note = scrHome, "Administrator password changed."
 	case "publish":
 		m.scr, m.note = m.back, "Report published. The link is shown below."
+	case "exclude":
+		m.scr, m.note = m.ex.ret, "Exclusion saved. Reports are updated."
+		return m, tea.Batch(m.fetch(), m.fetchExclusions())
+	case "unexclude":
+		m.scr, m.note = scrExclusions, "Exclusion removed."
+		return m, tea.Batch(m.fetch(), m.fetchExclusions())
 	case "upgrade":
 		m.opt.CanUpgrade = false
 		m.scr, m.note = scrHome, "Upgrade to "+m.opt.Latest+" started. This session will close while the engine restarts; reconnect in about a minute. Collected data is backed up first."
@@ -359,6 +388,9 @@ func (m Model) keyHome(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return doneMsg{"unshare", "", nil}
 			}
 		}
+	case "x":
+		m.scr, m.err, m.exSel = scrExclusions, "", 0
+		return m, m.fetchExclusions()
 	case "c":
 		if m.opt.AdminSettings {
 			m.scr, m.pwFocus, m.err = scrSettings, 0, ""
@@ -537,6 +569,10 @@ func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		if m.updateAvailable() {
 			m.scr = scrUpdate
+		}
+	case "e":
+		if m.tab == 1 {
+			return m.openExclude()
 		}
 	default:
 		if m.tab == 1 {

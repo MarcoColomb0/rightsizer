@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -32,6 +33,9 @@ type Backend interface {
 	StopShare(id string) error
 	ChangePassword(old, next string) error
 	RequestUpgrade(tag string) error
+	Exclusions() ([]analysis.Exclusion, error)
+	Exclude(x analysis.Exclusion) error
+	Unexclude(id string) error
 }
 
 // Local serves the console in-process. Host is set on the appliance.
@@ -79,6 +83,13 @@ func (l Local) Resume(id, password string) error {
 	defer cancel()
 	return l.E.Resume(ctx, id, password)
 }
+
+func (l Local) Exclusions() ([]analysis.Exclusion, error) { return l.E.Exclusions(), nil }
+func (l Local) Exclude(x analysis.Exclusion) error {
+	_, err := l.E.Exclude(x)
+	return err
+}
+func (l Local) Unexclude(id string) error { return l.E.Unexclude(id) }
 
 func (l Local) Finish(id string) error                   { return l.E.Finish(id) }
 func (l Local) Remove(id string) error                   { return l.E.Remove(id) }
@@ -157,6 +168,19 @@ func Serve(ctx context.Context, sock string, e *engine.Engine) error {
 	})
 	mux.HandleFunc("POST /shares/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, b.StopShare(r.PathValue("id")))
+	})
+	mux.HandleFunc("GET /exclusions", func(w http.ResponseWriter, r *http.Request) {
+		xs, err := b.Exclusions()
+		reply(w, xs, err)
+	})
+	mux.HandleFunc("POST /exclusions", func(w http.ResponseWriter, r *http.Request) {
+		var x analysis.Exclusion
+		if decode(w, r, &x) {
+			reply(w, nil, b.Exclude(x))
+		}
+	})
+	mux.HandleFunc("DELETE /exclusions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, nil, b.Unexclude(r.PathValue("id")))
 	})
 	mux.HandleFunc("GET /latest-report", func(w http.ResponseWriter, r *http.Request) {
 		p, err := e.LatestReport()
@@ -267,6 +291,15 @@ func (c *Client) Publish(id string) (*report.Share, error) {
 }
 
 func (c *Client) StopShare(id string) error { return c.call("POST", "/shares/"+id+"/stop", nil, nil) }
+
+func (c *Client) Exclusions() ([]analysis.Exclusion, error) {
+	var xs []analysis.Exclusion
+	return xs, c.call("GET", "/exclusions", nil, &xs)
+}
+
+func (c *Client) Exclude(x analysis.Exclusion) error { return c.call("POST", "/exclusions", x, nil) }
+
+func (c *Client) Unexclude(id string) error { return c.call("DELETE", "/exclusions/"+id, nil, nil) }
 
 func (c *Client) RequestUpgrade(string) error {
 	return errors.New("upgrades are run by the rightsizer launcher on the host")

@@ -22,6 +22,7 @@ type fake struct {
 	changed  [2]string
 	resumed  string
 	upgraded string
+	excl     []analysis.Exclusion
 	lockedPw bool
 }
 
@@ -38,6 +39,14 @@ func (f *fake) Add(c engine.Config, _ string) (string, error) {
 	return "abcd1234", nil
 }
 func (f *fake) RequestUpgrade(tag string) error { f.upgraded = tag; return nil }
+
+func (f *fake) Exclusions() ([]analysis.Exclusion, error) { return f.excl, nil }
+func (f *fake) Exclude(x analysis.Exclusion) error {
+	x.ID = "ex1"
+	f.excl = append(f.excl, x)
+	return nil
+}
+func (f *fake) Unexclude(id string) error { f.excl = nil; return nil }
 
 func (f *fake) ChangePassword(o, n string) error {
 	if o != "old password 123" {
@@ -66,7 +75,7 @@ func demo() *fake {
 		Preview: true,
 		Clusters: []analysis.ClusterResult{{Peaks: peaksDemo(), Name: "prod-cl01", Hosts: 6, CPUP: 41, CPUPeak: 63, MemP: 58, VCPU: 300, RecVCPU: 170, MemMB: 600 << 10, RecMemMB: 380 << 10, HostsNeeded: 4, CapMHz: 1000,
 			Points: []analysis.Point{{T: now, CPUMHz: 200}, {T: now.Add(time.Minute), CPUMHz: 600}}}},
-		Findings: []analysis.Finding{{VM: "sql-01", Kind: analysis.CPUOver, Severity: analysis.High, Current: "16 vCPU", Suggested: "6 vCPU", Confidence: "high"}},
+		Findings: []analysis.Finding{{UUID: "uuid-sql-01", VM: "sql-01", Kind: analysis.CPUOver, Severity: analysis.High, Current: "16 vCPU", Suggested: "6 vCPU", Confidence: "high"}},
 	}
 	t := res.Totals
 	a := engine.Status{ID: "aaaa0001", Phase: engine.Running, Config: engine.Config{Host: "vcsa01.corp.local", Profile: "balanced"}, Started: now.Add(-24 * time.Hour), Ends: now.Add(13 * 24 * time.Hour), Totals: &t, Findings: 1}
@@ -98,7 +107,7 @@ func run(m Model, cmd tea.Cmd) Model {
 		for _, c := range out {
 			m = run(m, c)
 		}
-	case summaryMsg, sourceMsg, doneMsg, probeMsg:
+	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg:
 		nm, next := m.Update(out)
 		m = run(nm.(Model), next)
 	}
@@ -225,4 +234,43 @@ func TestUpdatePrompt(t *testing.T) {
 		t.Fatalf("appliance must request the upgrade from the host, got %q", f.upgraded)
 	}
 	view(t, m, "Upgrade to v1.1.0 started")
+}
+
+func TestExcludeFromFinding(t *testing.T) {
+	f := demo()
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), tea.KeyMsg{Type: tea.KeyEnter})
+	m = send(t, m, m.fetch()(), keys1("2"), keys1("e"))
+	if m.scr != scrExclude {
+		t.Fatalf("e on a finding must open the form, got %v (%s)", m.scr, m.err)
+	}
+	view(t, m, "Exclude from recommendations", "sql-01", "follows the VM if it is renamed", "Vendor requirement")
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyRight},
+		tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(f.excl) != 0 || !strings.Contains(m.err, "note") {
+		t.Fatalf("a note must be required: %q", m.err)
+	}
+	m = send(t, m, keys1("Vendor requires 16 vCPU"), tea.KeyMsg{Type: tea.KeyEnter})
+	if len(f.excl) != 1 {
+		t.Fatalf("exclusion not saved: %s", m.err)
+	}
+	x := f.excl[0]
+	if x.UUID != "uuid-sql-01" || x.VCenter != "vcsa01.corp.local" || len(x.Kinds) != 1 || x.Kinds[0] != analysis.CPUOver || x.ReviewBy.IsZero() || x.Note != "Vendor requires 16 vCPU" {
+		t.Fatalf("unexpected exclusion %+v", x)
+	}
+	if m.scr != scrSource {
+		t.Fatal("must return to the source")
+	}
+
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc}, keys1("x"))
+	view(t, m, "Exclusions", "sql-01", "Vendor requires 16 vCPU", "Oversized vCPU")
+	m = send(t, m, keys1("a"))
+	m = send(t, m, keys1("citrix-*"), tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyTab}, keys1("PVS cache"), tea.KeyMsg{Type: tea.KeyEnter})
+	if len(f.excl) != 2 || f.excl[1].Name != "citrix-*" || f.excl[1].VCenter != "" {
+		t.Fatalf("pattern exclusion not saved: %+v %s", f.excl, m.err)
+	}
+	m = send(t, m, keys1("d"), keys1("y"))
+	if len(f.excl) != 0 {
+		t.Fatal("exclusion not removed")
+	}
 }

@@ -123,11 +123,15 @@ type Engine struct {
 
 	mu      sync.Mutex
 	sources map[string]*Source
+	excl    []analysis.Exclusion
 }
 
 func New(dir string, web *report.Server, v *vault.Vault) (*Engine, error) {
 	e := &Engine{dir: dir, web: web, vault: v, sources: map[string]*Source{}}
 	if err := e.migrateLegacy(); err != nil {
+		return nil, err
+	}
+	if err := e.loadExclusions(); err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(e.sourcesDir())

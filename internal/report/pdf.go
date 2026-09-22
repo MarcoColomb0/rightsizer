@@ -68,6 +68,7 @@ func WritePDF(r *analysis.Result, path string) error {
 	d.refresh()
 	d.peaks()
 	d.waste()
+	d.excluded()
 	d.findingSummary()
 	d.findings()
 	d.vmTable()
@@ -507,13 +508,53 @@ func (d *doc) waste() {
 		}
 		rows = append(rows, []string{o.Path, analysis.Human(o.Size), mod})
 	}
-	files := "virtual disk files are"
+	files, verb := "virtual disk files", "are"
 	if len(r.Orphans) == 1 {
-		files = "virtual disk file is"
+		files, verb = "virtual disk file", "is"
 	}
-	d.para(fmt.Sprintf("%d %s (%s) not used by any VM or template registered in this vCenter. "+
-		"Before deleting one, check that it does not belong to another vCenter sharing the datastore, a backup or replication product, or a VM being restored.", len(r.Orphans), files, analysis.Human(total)))
+	d.para(fmt.Sprintf("%d %s (%s) %s not used by any VM or template registered in this vCenter. "+
+		"Before deleting one, check that it does not belong to another vCenter sharing the datastore, a backup or replication product, or a VM being restored.", len(r.Orphans), files, analysis.Human(total), verb))
 	d.table([]col{{"Disk", 120, "L"}, {"Size", 25, "R"}, {"Last changed", 30, "R"}}, rows)
+}
+
+func (d *doc) excluded() {
+	xs := d.r.Excluded
+	if len(xs) == 0 {
+		return
+	}
+	if d.GetY() > 200 {
+		d.AddPage()
+	} else {
+		d.Ln(4)
+	}
+	d.h1("Excluded from recommendations")
+	d.para("These VMs and disks were deliberately left out. Excluded VMs count at their provisioned size in every total, so the savings above are not overstated.")
+	for _, x := range xs {
+		if d.GetY() > 262 {
+			d.AddPage()
+		}
+		d.font("B", 8.5)
+		d.color(cInk)
+		d.CellFormat(content, 5, d.tr(x.Target()+"  ·  "+x.Scope()), "", 1, "L", false, 0, "")
+		d.font("", 8)
+		d.SetX(margin + 3)
+		d.MultiCell(content-3, 4, d.tr(x.Reason+": "+x.Note), "", "L", false)
+		meta := "Excluded since " + x.Created.Format("2006-01-02")
+		if len(x.Matched) > 1 || x.Pattern() {
+			meta += fmt.Sprintf(" · matches %d: %s", len(x.Matched), strings.Join(x.Matched, ", "))
+		}
+		d.SetX(margin + 3)
+		d.font("", 7.5)
+		d.color(cMuted)
+		if x.Overdue(d.r.Generated) {
+			d.color(cBad)
+			meta += " · review overdue since " + x.ReviewBy.Format("2006-01-02")
+		} else if !x.ReviewBy.IsZero() {
+			meta += " · review by " + x.ReviewBy.Format("2006-01-02")
+		}
+		d.MultiCell(content-3, 3.8, d.tr(meta), "", "L", false)
+		d.Ln(1.5)
+	}
 }
 
 func ghz(mhz float64) string { return fmt.Sprintf("%.0f GHz", mhz/1000) }

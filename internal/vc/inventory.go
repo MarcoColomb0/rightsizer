@@ -45,6 +45,7 @@ type Snapshot struct {
 
 type VM struct {
 	Ref           string
+	UUID          string
 	Name          string
 	Cluster       string
 	Host          string
@@ -82,7 +83,7 @@ type Inventory struct {
 }
 
 var vmProps = []string{
-	"name", "config.template", "config.guestFullName", "config.hardware.numCPU",
+	"name", "config.instanceUuid", "config.template", "config.guestFullName", "config.hardware.numCPU",
 	"config.hardware.numCoresPerSocket", "config.hardware.memoryMB", "config.hardware.device", "runtime.powerState",
 	"runtime.host", "summary.storage", "guest.disk", "guest.toolsRunningStatus",
 	"snapshot", "layoutEx",
@@ -187,6 +188,7 @@ func convertVM(m *mo.VirtualMachine, hostCluster, hostName map[string]string) VM
 		vm.Cluster = hostCluster[m.Runtime.Host.Value]
 	}
 	if m.Config != nil {
+		vm.UUID = m.Config.InstanceUuid
 		vm.Template = m.Config.Template
 		vm.GuestOS = m.Config.GuestFullName
 		vm.VCPU = int(m.Config.Hardware.NumCPU)

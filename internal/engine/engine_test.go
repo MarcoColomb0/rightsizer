@@ -286,3 +286,42 @@ func TestUnreadableStateIsPreserved(t *testing.T) {
 		t.Fatal("unreadable state must be kept")
 	}
 }
+
+func TestExclusionsPersistAndApply(t *testing.T) {
+	a := newSim(t)
+	defer a.close()
+	dir := t.TempDir()
+	web := &report.Server{Listen: "127.0.0.1:0", PublicHost: "127.0.0.1", TTL: time.Hour}
+	e, _ := New(dir, web, nil)
+	if _, err := e.Exclude(analysis.Exclusion{Name: "DC0_H0_VM*", Note: ""}); err == nil {
+		t.Fatal("exclusion without a note must be rejected")
+	}
+	id, err := e.Exclude(analysis.Exclusion{VCenter: a.host, Name: "DC0_C0_RP0_VM*", Reason: "Vendor requirement", Note: "appliance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.Shutdown()
+
+	e2, _ := New(dir, web, nil)
+	if xs := e2.Exclusions(); len(xs) != 1 || xs[0].ID != id {
+		t.Fatalf("exclusions must survive a restart: %+v", xs)
+	}
+	src, err := e2.Add(context.Background(), a.cfg(), a.pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPolls(t, e2, src, 1)
+	st, _ := e2.Source(src)
+	for _, f := range st.Result.Findings {
+		if strings.HasPrefix(f.VM, "DC0_C0_RP0_VM") {
+			t.Fatalf("excluded VM still has findings: %+v", f)
+		}
+	}
+	if len(st.Result.Excluded) != 1 || len(st.Result.Excluded[0].Matched) == 0 {
+		t.Fatalf("new analyses must apply stored exclusions: %+v", st.Result.Excluded)
+	}
+	if err := e2.Unexclude(id); err != nil || len(e2.Exclusions()) != 0 {
+		t.Fatal("unexclude failed")
+	}
+	e2.Shutdown()
+}

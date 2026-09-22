@@ -428,6 +428,10 @@ func (s *Source) finalize() error {
 
 func (s *Source) refreshResult() {
 	s.mu.Lock()
+	host := s.st.Config.Host
+	s.mu.Unlock()
+	excl := s.eng.exclusionsFor(host)
+	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.st.Inventory == nil || s.st.Store == nil {
 		return
@@ -438,7 +442,7 @@ func (s *Source) refreshResult() {
 	}
 	r := analysis.Analyze(analysis.Input{
 		Inv: s.st.Inventory, RT: s.st.Store, History: s.st.History,
-		Orphans: s.st.Orphans, WasteNote: s.st.WasteNote,
+		Orphans: s.st.Orphans, WasteNote: s.st.WasteNote, Exclusions: excl,
 		Profile: analysis.ProfileByName(s.st.Config.Profile),
 		Start:   s.st.Started, End: end, Planned: s.st.Config.Duration,
 	})

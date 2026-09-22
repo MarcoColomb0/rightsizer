@@ -14,6 +14,7 @@ rightsizer watches one or more VMware vCenters for 24 hours to 14 days, compares
 - **Peak-aware sizing:** VMs rarely peak at the same time. rightsizer measures how much less CPU a cluster needs than the sum of its VMs' peaks (the diversity factor), and shows an hour-of-week demand heatmap. It also finds VMs that peak together on the same host (spread them with DRS) and VMs that peak at different times (good host mates).
 - **Day-one preview:** when an analysis starts, rightsizer imports the last 14 days of history stored in vCenter, so first results are available within minutes. Each VM switches to precise 20-second data once it has 24 hours of it.
 - **Hidden waste:** orphaned virtual disks that no VM uses, VMs wider than a NUMA node, VMs slowed down by CPU co-stop, idle VMs, VMs powered off for the whole window, old snapshots, and thick disks that are mostly empty.
+- **Exclusions with justification:** leave a VM, a name pattern (e.g. `citrix-*`) or an orphaned disk out of the recommendations, with a reason, a note and an optional review date. Exclusions follow VMs through renames, are kept across upgrades, apply to future analyses, and are listed in every report.
 - **Several vCenters:** analyse many at once, with a report per vCenter or one combined report.
 - **Live console:** a terminal UI shows progress and findings while data is collected.
 - **PDF report:** executive summary, per-cluster charts, prioritised findings and methodology.
@@ -84,7 +85,7 @@ rightsizer
 2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
 3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
 
-On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, and `s` stops sharing reports. Inside a vCenter, the tabs show clusters (`1`), findings (`2`) and peak analysis (`3`). `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `e` excludes the selected VM or disk. Inside a vCenter, the tabs show clusters (`1`), findings (`2`) and peak analysis (`3`). `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
 
 Results marked **preview** come from vCenter's stored averages (5-minute to 2-hour samples). Averages smooth out short peaks, so preview utilisation reads low. Treat preview recommendations as a first look.
 

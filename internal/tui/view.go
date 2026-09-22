@@ -33,6 +33,10 @@ func (m Model) View() string {
 		body = m.viewSettings()
 	case scrUpdate:
 		body = m.viewUpdate()
+	case scrExclude:
+		body = m.viewExclude()
+	case scrExclusions:
+		body = m.viewExclusions()
 	}
 	out := m.header() + "\n\n" + body
 	if m.note != "" {
@@ -118,7 +122,7 @@ func (m Model) viewHome() string {
 		}
 	}
 	b.WriteString("\n")
-	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF"}
+	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF", "x", "exclusions"}
 	if len(m.sum.Shares) > 0 {
 		k = append(k, "s", "stop sharing")
 	}
@@ -374,6 +378,9 @@ func (m Model) viewSource() string {
 		return b.String()
 	}
 	k := []string{"esc", "back", "1-3", "tabs", "p", "PDF"}
+	if m.tab == 1 {
+		k = append(k, "e", "exclude")
+	}
 	if len(m.shares(s.ID)) > 0 {
 		k = append(k, "s", "stop sharing")
 	}
