@@ -83,6 +83,9 @@ type Options struct {
 	ReleaseURL    string
 	CanUpgrade    bool
 	AdminSettings bool
+	// Appliance upgrades are performed by the host after a request; the
+	// console does not exit.
+	Appliance bool
 }
 
 type Model struct {
@@ -299,6 +302,9 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.scr, m.note = scrHome, "Administrator password changed."
 	case "publish":
 		m.scr, m.note = m.back, "Report published. The link is shown below."
+	case "upgrade":
+		m.opt.CanUpgrade = false
+		m.scr, m.note = scrHome, "Upgrade to "+m.opt.Latest+" started. This session will close while the engine restarts; reconnect in about a minute. Collected data is backed up first."
 	default:
 		m.scr = m.back
 	}
@@ -602,6 +608,11 @@ func (m Model) keySettings(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) keyUpdate(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "y", "Y", "enter":
+		if m.opt.Appliance {
+			tag := m.opt.Latest
+			m.back = scrHome
+			return m.busyCmd("Requesting the upgrade…", "upgrade", "", func() error { return m.b.RequestUpgrade(tag) })
+		}
 		m.upgrade = true
 		return m, tea.Quit
 	case "n", "N", "esc":

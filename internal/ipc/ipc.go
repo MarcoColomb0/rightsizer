@@ -12,6 +12,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
@@ -30,11 +31,31 @@ type Backend interface {
 	Publish(id string) (*report.Share, error)
 	StopShare(id string) error
 	ChangePassword(old, next string) error
+	RequestUpgrade(tag string) error
 }
 
-type Local struct{ E *engine.Engine }
+// Local serves the console in-process. Host is set on the appliance.
+type Local struct {
+	E    *engine.Engine
+	Host *appliance.Host
+}
 
-func (l Local) Summary() (*engine.Summary, error) { s := l.E.Summary(); return &s, nil }
+func (l Local) Summary() (*engine.Summary, error) {
+	s := l.E.Summary()
+	if l.Host != nil {
+		if u := l.Host.Status(); u != nil {
+			s.Upgrade = &engine.UpgradeInfo{Version: u.Version, State: u.State, Message: u.Message, Time: u.Time}
+		}
+	}
+	return &s, nil
+}
+
+func (l Local) RequestUpgrade(tag string) error {
+	if l.Host == nil {
+		return errors.New("upgrades are run by the rightsizer launcher on the host")
+	}
+	return l.Host.RequestUpgrade(tag)
+}
 
 func (l Local) Source(id string) (*engine.Status, error) {
 	s, err := l.E.Source(id)
@@ -246,6 +267,10 @@ func (c *Client) Publish(id string) (*report.Share, error) {
 }
 
 func (c *Client) StopShare(id string) error { return c.call("POST", "/shares/"+id+"/stop", nil, nil) }
+
+func (c *Client) RequestUpgrade(string) error {
+	return errors.New("upgrades are run by the rightsizer launcher on the host")
+}
 
 func (c *Client) ChangePassword(string, string) error {
 	return errors.New("not available in this installation")

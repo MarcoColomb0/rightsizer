@@ -89,10 +89,18 @@ type VaultState struct {
 	Locked  bool
 }
 
+type UpgradeInfo struct {
+	Version string
+	State   string
+	Message string
+	Time    time.Time
+}
+
 type Summary struct {
 	Sources []Status
 	Shares  []report.Share
 	Vault   VaultState
+	Upgrade *UpgradeInfo
 }
 
 // Engine runs one analysis per vCenter source. With a vault, vCenter

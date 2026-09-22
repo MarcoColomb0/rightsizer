@@ -21,6 +21,7 @@ type fake struct {
 	added    engine.Config
 	changed  [2]string
 	resumed  string
+	upgraded string
 	lockedPw bool
 }
 
@@ -36,6 +37,8 @@ func (f *fake) Add(c engine.Config, _ string) (string, error) {
 	f.added = c
 	return "abcd1234", nil
 }
+func (f *fake) RequestUpgrade(tag string) error { f.upgraded = tag; return nil }
+
 func (f *fake) ChangePassword(o, n string) error {
 	if o != "old password 123" {
 		return errors.New("wrong password")
@@ -197,4 +200,13 @@ func TestUpdatePrompt(t *testing.T) {
 	if m.scr == scrUpdate {
 		t.Fatal("no prompt when upgrades are not possible")
 	}
+
+	m = New(f, Options{Version: "v1.0.0", Latest: "v1.1.0", CanUpgrade: true, Appliance: true})
+	m = send(t, m, m.fetch()())
+	view(t, m, "Log in again afterwards")
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if f.upgraded != "v1.1.0" || m.UpgradeRequested() || m.scr != scrHome {
+		t.Fatalf("appliance must request the upgrade from the host, got %q", f.upgraded)
+	}
+	view(t, m, "Upgrade to v1.1.0 started")
 }

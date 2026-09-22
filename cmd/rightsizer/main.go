@@ -16,8 +16,11 @@ import (
 	_ "time/tzdata"
 
 	tea "github.com/charmbracelet/bubbletea"
+	gossh "golang.org/x/crypto/ssh"
 
+	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/backup"
+	"github.com/MarcoColomb0/rightsizer/internal/console"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -42,6 +45,10 @@ func main() {
 		err = runDaemon()
 	case "status":
 		err = printStatus()
+	case "console":
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		console.Run(ctx, os.Stdout, version, dataDir(), ipc.NewClient(socket()))
+		stop()
 	case "export":
 		err = export()
 	case "backup", "restore":
@@ -76,6 +83,7 @@ Usage:
   rightsizer backup <file>   archive the data directory
   rightsizer restore <file>  replace the data directory from an archive
   rightsizer daemon          run the engine (used by the container)
+  rightsizer console         show the appliance status screen
   rightsizer version
 `)
 }
@@ -91,7 +99,7 @@ func env(k, def string) string {
 	return def
 }
 
-func appliance() bool { return os.Getenv("RIGHTSIZER_APPLIANCE") == "1" }
+func applianceMode() bool { return os.Getenv("RIGHTSIZER_APPLIANCE") == "1" }
 
 func runDaemon() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -112,7 +120,7 @@ func runDaemon() error {
 		TTL:        time.Duration(hours) * time.Hour,
 	}
 	var v *vault.Vault
-	if appliance() {
+	if applianceMode() {
 		v = vault.Open(dataDir())
 		if err := bootstrap(v); err != nil {
 			return err
@@ -124,23 +132,36 @@ func runDaemon() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	slog.Info("rightsizer engine started", "version", version, "appliance", appliance())
+	slog.Info("rightsizer engine started", "version", version, "appliance", applianceMode())
 
 	errc := make(chan error, 2)
 	go func() { errc <- ipc.Serve(ctx, socket(), e) }()
-	if appliance() {
+	if applianceMode() {
+		checker := &appliance.Checker{}
+		if env("RIGHTSIZER_UPDATE_CHECK", "true") == "true" {
+			go checker.Run(ctx, 6*time.Hour)
+		}
+		host := &appliance.Host{Dir: filepath.Join(dataDir(), "host"), Current: version}
+		keyPath := filepath.Join(dataDir(), "ssh", "host_ed25519")
+		if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+			return err
+		}
 		srv, err := sshd.New(sshd.Config{
 			Listen:      env("RIGHTSIZER_SSH_LISTEN", ":2222"),
-			HostKeyPath: filepath.Join(dataDir(), "ssh", "host_ed25519"),
+			HostKeyPath: keyPath,
 			Login:       e.Unlock,
 			Program: func() tea.Model {
-				return tui.New(ipc.Local{E: e}, tui.Options{Version: version, AdminSettings: true})
+				r := checker.Latest()
+				return tui.New(ipc.Local{E: e, Host: host}, tui.Options{
+					Version: version, Latest: r.Tag, ReleaseURL: r.URL,
+					CanUpgrade: true, AdminSettings: true, Appliance: true,
+				})
 			},
 		})
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Join(dataDir(), "ssh"), 0o700); err != nil {
+		if err := writeFingerprint(keyPath); err != nil {
 			return err
 		}
 		go func() { errc <- srv.ListenAndServe() }()
@@ -181,6 +202,18 @@ func bootstrap(v *vault.Vault) error {
 	}
 	slog.Info("administrator password set from vApp options; stored vCenter credentials were cleared")
 	return nil
+}
+
+func writeFingerprint(keyPath string) error {
+	pem, err := os.ReadFile(keyPath)
+	if err != nil {
+		return err
+	}
+	signer, err := gossh.ParsePrivateKey(pem)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(filepath.Dir(keyPath), "fingerprint"), []byte(gossh.FingerprintSHA256(signer.PublicKey())+"\n"), 0o600)
 }
 
 func runTUI() error {

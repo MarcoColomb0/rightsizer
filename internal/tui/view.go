@@ -106,6 +106,17 @@ func (m Model) viewHome() string {
 	if len(m.sum.Shares) > 0 {
 		b.WriteString("\n" + sharesBox(m.sum.Shares, m.sum.Sources) + "\n")
 	}
+	if u := m.sum.Upgrade; u != nil && time.Since(u.Time) < 24*time.Hour {
+		msg := fmt.Sprintf("Upgrade to %s: %s", u.Version, u.State)
+		if u.Message != "" {
+			msg += " (" + u.Message + ")"
+		}
+		if u.State == "failed" || u.State == "rolled back" {
+			b.WriteString("\n" + sBad.Render("✗ "+msg) + "\n")
+		} else {
+			b.WriteString("\n" + sMuted.Render("↑ "+msg) + "\n")
+		}
+	}
 	b.WriteString("\n")
 	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF"}
 	if len(m.sum.Shares) > 0 {
@@ -291,6 +302,9 @@ func (m Model) viewUpdate() string {
 		for _, s := range m.sum.Sources {
 			if s.Phase == engine.Running || s.Phase == engine.NeedPassword {
 				msg := "Running analyses continue after the upgrade."
+				if m.opt.Appliance {
+					msg += " Log in again afterwards so collection resumes with the stored credentials."
+				}
 				if !m.sum.Vault.Enabled {
 					msg += " You will be asked for their vCenter passwords again."
 				}
