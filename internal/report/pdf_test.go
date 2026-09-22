@@ -93,6 +93,9 @@ func demo() *analysis.Result {
 		},
 		Orphans: []vc.OrphanDisk{{Datastore: "ds-prod-01", Path: "[ds-prod-01] old-sql02/old-sql02.vmdk", Size: 412 << 30, Modified: end.Add(-200 * 24 * time.Hour)}}})
 	r.Final = true
+	r.Accuracy = &analysis.Accuracy{VMs: 64, HoursBoth: 330, Percentile: 95, CPUMedian: 0.66, MemMedian: 0.94,
+		Bursty: []analysis.Burst{{VM: "prod01-app14", RealtimeP: 81, HistoryP: 37, RealtimeMx: 100}, {VM: "dmz01-svc08", RealtimeP: 64, HistoryP: 33, RealtimeMx: 92}}}
+	r.Clusters[0].EarlierPeak = &analysis.EarlierPeak{At: start.Add(-4*24*time.Hour + 14*time.Hour), Pct: 71, WindowPct: 48}
 	r.VCenter = "vcsa01.corp.local — VMware vCenter Server 8.0.3 build-24322831"
 	return r
 }

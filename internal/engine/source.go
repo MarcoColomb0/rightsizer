@@ -44,6 +44,9 @@ func (s *Source) status(full bool) Status {
 		Finished: s.st.Finished, About: s.st.About, LastPoll: s.lastPoll, NextPoll: s.nextPoll,
 		LastError: s.lastErr, ReportFile: s.st.Report, History: s.st.HistoryState,
 	}
+	if !s.st.HistorySync.IsZero() && strings.HasPrefix(st.History, "imported") {
+		st.History += ", synced " + s.st.HistorySync.Local().Format("Jan 02 15:04")
+	}
 	if s.st.Store != nil {
 		st.Polls = s.st.Store.Polls
 	}
@@ -122,14 +125,17 @@ func (s *Source) background(ctx context.Context) {
 	for {
 		s.mu.Lock()
 		cl, inv, hist := s.client, s.st.Inventory, s.st.HistoryState
-		scanned := s.st.WasteScanned
+		scanned, synced := s.st.WasteScanned, s.st.HistorySync
 		s.mu.Unlock()
-		wait := time.Minute
+		wait := backgroundTick
 		if cl == nil || inv == nil {
 			wait = 2 * time.Second
 		} else {
-			if hist == "" || strings.HasPrefix(hist, "loading") {
+			switch {
+			case hist == "" || strings.HasPrefix(hist, "loading"):
 				s.importHistory(ctx, cl, inv)
+			case strings.HasPrefix(hist, "imported") && time.Since(synced) >= historyEvery:
+				s.syncHistory(ctx, cl, inv)
 			}
 			if time.Since(scanned) >= wasteEvery {
 				s.scanWaste(ctx, cl, inv)
@@ -202,10 +208,73 @@ func (s *Source) importHistory(ctx context.Context, cl *vc.Client, inv *vc.Inven
 	}
 	s.mu.Lock()
 	s.st.History = hist
+	s.st.HistoryStep = plan[0].Interval
+	s.st.HistorySync = time.Now()
 	s.st.HistoryState = fmt.Sprintf("imported from %s", oldest.Local().Format("Jan 02"))
 	_ = s.save()
 	s.mu.Unlock()
 	slog.Info("vCenter history imported", "source", s.id, "from", oldest)
+	s.refreshResult()
+}
+
+// syncHistory keeps reading vCenter's finest historical interval during the
+// window. Samples inside the window also go to HistoryLive, which is compared
+// with the 20-second data to show how much averaging hides.
+func (s *Source) syncHistory(ctx context.Context, cl *vc.Client, inv *vc.Inventory) {
+	s.mu.Lock()
+	hist, step, started := s.st.History, s.st.HistoryStep, s.st.Started
+	if s.st.HistoryLive == nil {
+		s.st.HistoryLive = analysis.NewStore(started)
+	}
+	live := s.st.HistoryLive
+	since := hist.Newest()
+	s.mu.Unlock()
+	now, err := cl.Now(ctx)
+	if err != nil || step == 0 {
+		return
+	}
+	if since.IsZero() || since.Before(started) {
+		since = started
+	}
+	w := vc.Window{Interval: step, Start: since, End: now}
+	var vms, hosts []string
+	vcpu := map[string]int{}
+	for _, v := range inv.VMs {
+		if !v.Template {
+			vms = append(vms, v.Ref)
+			vcpu[v.Ref] = v.VCPU
+		}
+	}
+	for _, h := range inv.Hosts {
+		if h.Connected {
+			hosts = append(hosts, h.Ref)
+		}
+	}
+	vs, err := cl.History(ctx, "VirtualMachine", vms, vc.HistoryVMMetrics, w)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("vCenter history sync failed", "source", s.id, "err", err)
+		}
+		return
+	}
+	hs, err := cl.History(ctx, "HostSystem", hosts, vc.HostMetrics, w)
+	if err != nil {
+		return
+	}
+	hc, cp := analysis.Capacity(inv)
+	s.mu.Lock()
+	for _, v := range vs {
+		hist.AddVM(v, vcpu[v.Ref])
+		live.AddVM(v, vcpu[v.Ref])
+	}
+	hist.AddHosts(hs, hc, cp)
+	live.AddHosts(hs, hc, cp)
+	for _, c := range hist.Clusters {
+		c.Flush()
+	}
+	s.st.HistorySync = time.Now()
+	_ = s.save()
+	s.mu.Unlock()
 	s.refreshResult()
 }
 
@@ -441,7 +510,7 @@ func (s *Source) refreshResult() {
 		end = s.st.Finished
 	}
 	r := analysis.Analyze(analysis.Input{
-		Inv: s.st.Inventory, RT: s.st.Store, History: s.st.History,
+		Inv: s.st.Inventory, RT: s.st.Store, History: s.st.History, Live: s.st.HistoryLive,
 		Orphans: s.st.Orphans, WasteNote: s.st.WasteNote, Exclusions: excl,
 		Profile: analysis.ProfileByName(s.st.Config.Profile),
 		Start:   s.st.Started, End: end, Planned: s.st.Config.Duration,

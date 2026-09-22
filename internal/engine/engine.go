@@ -39,6 +39,8 @@ var (
 	pollEvery      = 5 * time.Minute
 	inventoryEvery = time.Hour
 	wasteEvery     = 24 * time.Hour
+	historyEvery   = time.Hour
+	backgroundTick = time.Minute
 	historyBack    = 14 * 24 * time.Hour
 )
 
@@ -69,6 +71,9 @@ type state struct {
 
 	History      *analysis.Store
 	HistoryState string
+	HistoryLive  *analysis.Store
+	HistoryStep  int32
+	HistorySync  time.Time
 	Orphans      []vc.OrphanDisk
 	WasteNote    string
 	WasteScanned time.Time

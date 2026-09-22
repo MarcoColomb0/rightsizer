@@ -101,6 +101,7 @@ type VMResult struct {
 
 type ClusterResult struct {
 	Name        string
+	EarlierPeak *EarlierPeak
 	Preview     bool
 	Peaks       *Peaks
 	Hosts       int
@@ -154,14 +155,18 @@ type Result struct {
 	Orphans     []vc.OrphanDisk
 	WasteNote   string
 	Excluded    []Excluded
+	Accuracy    *Accuracy
 }
 
 // Input is everything one analysis is computed from. History holds vCenter's
 // rolled-up statistics for the period before the analysis started.
 type Input struct {
-	Inv        *vc.Inventory
-	RT         *Store
-	History    *Store
+	Inv     *vc.Inventory
+	RT      *Store
+	History *Store
+	// Live holds historical samples collected during the window, to compare
+	// vCenter's averages with the 20-second data.
+	Live       *Store
 	Orphans    []vc.OrphanDisk
 	WasteNote  string
 	Exclusions []Exclusion
@@ -344,6 +349,7 @@ func Analyze(in Input) *Result {
 		c.Points = mergePoints(in, name)
 		c.Peaks = peaks(c, vmsByCluster[name], st, p)
 		c.Points = Downsample(c.Points, 336)
+		c.EarlierPeak = earlierPeak(in.History, name, start, c.CapMHz)
 		r.Findings = append(r.Findings, coPeakFindings(*c)...)
 		r.Clusters = append(r.Clusters, *c)
 		t.Hosts += c.Hosts
@@ -360,6 +366,7 @@ func Analyze(in Input) *Result {
 		orphans = append(orphans, o)
 	}
 	r.Orphans = orphans
+	r.Accuracy = accuracy(inv, in.RT, in.Live, p)
 	r.Findings = append(r.Findings, orphanFindings(orphans)...)
 	for _, x := range in.Exclusions {
 		if names := matched[x.ID]; len(names) > 0 {

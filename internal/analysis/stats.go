@@ -98,7 +98,7 @@ type VMStats struct {
 
 const (
 	SlotLength = 30 * time.Minute
-	maxSlots   = 16 * 48
+	maxSlots   = 32 * 48
 )
 
 func (s *VMStats) Hours() float64 {

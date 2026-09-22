@@ -357,6 +357,7 @@ func (m Model) viewSource() string {
 	switch m.tab {
 	case 0:
 		b.WriteString(clusters(s.Result))
+		b.WriteString(insights(s.Result))
 		if s.History != "" {
 			b.WriteString("\n\n" + sMuted.Render("vCenter history: "+s.History))
 		}
@@ -566,3 +567,30 @@ func peaksView(r *analysis.Result) string {
 }
 
 func ghz(mhz float64) string { return fmt.Sprintf("%.0f GHz", mhz/1000) }
+
+func insights(r *analysis.Result) string {
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, c := range r.Clusters {
+		if ep := c.EarlierPeak; ep != nil {
+			b.WriteString("\n" + sWarn.Render(fmt.Sprintf("⚠ %s: a higher peak (%.0f%% of capacity) happened on %s, before this analysis; the window peaked at %.0f%%.",
+				c.Name, ep.Pct, ep.At.Local().Format("Mon Jan 02 15:04"), ep.WindowPct)))
+		}
+	}
+	if a := r.Accuracy; a != nil {
+		b.WriteString("\n" + sMuted.Render(fmt.Sprintf("vCenter history vs 20-second data (%d VMs): CPU p%.0f reads %.0f%% lower, memory %.0f%% lower.",
+			a.VMs, a.Percentile, (1-a.CPUMedian)*100, (1-a.MemMedian)*100)))
+		for i, x := range a.Bursty {
+			if i == 3 {
+				break
+			}
+			b.WriteString("\n" + sMuted.Render(fmt.Sprintf("  bursty: %s %.0f%% in 20-second data, %.0f%% in vCenter averages", x.VM, x.RealtimeP, x.HistoryP)))
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n" + b.String()
+}

@@ -23,6 +23,8 @@ import (
 
 func TestMain(m *testing.M) {
 	pollEvery = 100 * time.Millisecond
+	historyEvery = 300 * time.Millisecond
+	backgroundTick = 200 * time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -131,8 +133,27 @@ func TestMultiSourceWithVault(t *testing.T) {
 	if hist == nil || len(hist.VMs) == 0 {
 		t.Fatal("history store empty")
 	}
+	for {
+		src.mu.Lock()
+		live := src.st.HistoryLive
+		n := 0
+		if live != nil {
+			n = len(live.VMs)
+		}
+		src.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("history is not synced during the window")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if st, _ := e.Source(ida); !strings.Contains(st.History, "synced") {
+		t.Fatalf("status must show the history sync: %q", st.History)
+	}
 	for _, v := range hist.VMs {
-		if h := v.Hours(); h < 13.9*24 || h > 14*24+0.01 {
+		if h := v.Hours(); h < 13.9*24 {
 			t.Fatalf("history must cover about 14 days per VM, got %.1f h", h)
 		}
 	}

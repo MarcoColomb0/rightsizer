@@ -67,6 +67,7 @@ func WritePDF(r *analysis.Result, path string) error {
 	d.cover()
 	d.refresh()
 	d.peaks()
+	d.accuracy()
 	d.waste()
 	d.excluded()
 	d.findingSummary()
@@ -330,12 +331,21 @@ func (d *doc) refresh() {
 		})
 	}
 	d.table([]col{
-		{"Cluster", 28, "L"}, {"Hosts", 11, "R"}, {"Cores", 12, "R"}, {"CPU p/peak", 17, "R"}, {"Mem p", 11, "R"},
-		{"vCPU", 17, "R"}, {"vRAM", 25, "R"}, {"Need GHz", 15, "R"}, {"Need RAM", 16, "R"}, {"Need cores", 15, "R"}, {"Need hosts", 17, "R"},
+		{"Cluster", 24, "L"}, {"Hosts", 10, "R"}, {"Cores", 11, "R"}, {"CPU p/peak", 17, "R"}, {"Mem p", 11, "R"},
+		{"vCPU", 17, "R"}, {"vRAM", 25, "R"}, {"Need GHz", 16, "R"}, {"Need RAM", 18, "R"}, {"Need cores", 18, "R"}, {"Need hosts", 18, "R"},
 	}, rows)
 	d.font("I", 7.5)
 	d.color(cMuted)
 	d.text(4, "Need hosts: total (hosts for CPU / hosts for memory + HA spare) using the current host type. CPU p = cluster CPU demand percentile as % of capacity.")
+	for _, c := range r.Clusters {
+		if ep := c.EarlierPeak; ep != nil {
+			d.Ln(1)
+			d.font("", 8.5)
+			d.color(cWarn)
+			d.text(4.4, fmt.Sprintf("%s: vCenter history shows a higher peak of %.0f%% of CPU capacity on %s, before this analysis started. The window itself peaked at %.0f%%. Check whether that load recurs (month-end, batch runs) before relying on these figures.",
+				c.Name, ep.Pct, ep.At.Local().Format("Monday 2006-01-02 15:04"), ep.WindowPct))
+		}
+	}
 
 	for _, c := range r.Clusters {
 		if len(c.Points) < 2 || c.CapMHz == 0 {
@@ -442,6 +452,31 @@ func (d *doc) peaks() {
 		}
 		d.Ln(2)
 	}
+}
+
+func (d *doc) accuracy() {
+	a := d.r.Accuracy
+	if a == nil {
+		return
+	}
+	if d.GetY() > 190 {
+		d.AddPage()
+	} else {
+		d.Ln(4)
+	}
+	d.h1("How accurate is vCenter's history?")
+	d.para(fmt.Sprintf("While collecting 20-second samples, rightsizer also read vCenter's own 5-minute averages for the same period and compared them across %d VMs (about %.0f hours each). "+
+		"At the %.0fth percentile, the averages read CPU %.0f%% lower and memory %.0f%% lower than the real samples. Sizing from vCenter history alone would under-size bursty workloads like the ones below.",
+		a.VMs, a.HoursBoth, a.Percentile, (1-a.CPUMedian)*100, (1-a.MemMedian)*100))
+	if len(a.Bursty) == 0 {
+		return
+	}
+	rows := [][]string{}
+	for _, x := range a.Bursty {
+		rows = append(rows, []string{x.VM, fmt.Sprintf("%.0f%%", x.RealtimeP), fmt.Sprintf("%.0f%%", x.HistoryP), fmt.Sprintf("%.0f%%", x.RealtimeMx)})
+	}
+	pc := fmt.Sprintf("p%.0f", a.Percentile)
+	d.table([]col{{"Bursty VM", 80, "L"}, {"CPU " + pc + ", 20-second", 35, "R"}, {"CPU " + pc + ", vCenter average", 40, "R"}, {"CPU peak", 25, "R"}}, rows)
 }
 
 func (d *doc) heatmap(pk *analysis.Peaks) {
@@ -694,6 +729,7 @@ func (d *doc) method() {
 		"Co-stop: average co-stop of 3% or more per vCPU on a multi-vCPU VM means it waits for enough free cores; fewer vCPUs make it faster.",
 		"Peak-aware sizing: diversity = sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of the VMs' combined demand. VMs whose 30-minute demand correlates at 0.8 or more on the same host are reported as co-peaking; -0.4 or less as complementary.",
 		"Orphaned disks: .vmdk files on accessible datastores that no registered VM, template or snapshot references. First-class disks and replication, HA and vSAN system folders are ignored. Needs the Browse datastore privilege.",
+		"History accuracy: during the window, vCenter's finest stored interval is read every hour and compared with the 20-second data for the same period, for VMs with at least 24 hours of both.",
 		"Preview: until a VM has 24 hours of 20-second data, results use vCenter's stored history for the previous 14 days, read at the finest interval available for each period and weighted by the time each sample covers.",
 	}
 	for _, s := range rules {
