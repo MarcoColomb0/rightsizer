@@ -408,6 +408,11 @@ if [ "$LAUNCHER_ONLY" -eq 1 ]; then
 	exit 0
 fi
 
+if [ "$BUILD" -eq 0 ] && ! docker pull -q "ghcr.io/marcocolomb0/rightsizer:${TAG#v}" >/dev/null 2>&1; then
+	info "Image not available from the registry, building ${TAG} from source instead"
+	BUILD=1
+fi
+
 if [ "$BUILD" -eq 1 ]; then
 	IMAGE="rightsizer:${TAG}"
 	VERSION="$TAG"
@@ -429,10 +434,6 @@ if docker inspect rightsizer >/dev/null 2>&1; then
 		"$BIN" _upgrade "$TAG"
 	fi
 else
-	if [ "$BUILD" -eq 0 ]; then
-		info "Pulling ${IMAGE}"
-		docker pull "$IMAGE"
-	fi
 	info "Starting container"
 	"$BIN" _create "$IMAGE"
 	for _ in $(seq 1 20); do
