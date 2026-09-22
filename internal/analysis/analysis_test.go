@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 func TestHistPct(t *testing.T) {

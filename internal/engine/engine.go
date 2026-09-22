@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marcocolombo/rightsizer/internal/analysis"
-	"github.com/marcocolombo/rightsizer/internal/report"
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 type Phase string

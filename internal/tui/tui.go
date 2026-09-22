@@ -11,10 +11,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/marcocolombo/rightsizer/internal/analysis"
-	"github.com/marcocolombo/rightsizer/internal/engine"
-	"github.com/marcocolombo/rightsizer/internal/ipc"
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/engine"
+	"github.com/MarcoColomb0/rightsizer/internal/ipc"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 type screen int

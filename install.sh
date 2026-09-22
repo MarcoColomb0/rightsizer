@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# rightsizer installer - https://github.com/marcocolombo/rightsizer
+# rightsizer installer - https://github.com/MarcoColomb0/rightsizer
 set -euo pipefail
 
-REPO="marcocolombo/rightsizer"
-IMAGE="${RIGHTSIZER_IMAGE:-ghcr.io/${REPO}}"
+REPO="MarcoColomb0/rightsizer"
+IMAGE="${RIGHTSIZER_IMAGE:-ghcr.io/marcocolomb0/rightsizer}"
 TAG="${RIGHTSIZER_TAG:-latest}"
 PORT="${RIGHTSIZER_PORT:-8443}"
 BIND="${RIGHTSIZER_BIND:-0.0.0.0}"

@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 const histBuckets = 200

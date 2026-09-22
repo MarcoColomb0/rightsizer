@@ -12,9 +12,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/marcocolombo/rightsizer/internal/engine"
-	"github.com/marcocolombo/rightsizer/internal/report"
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/engine"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 type StartRequest struct {

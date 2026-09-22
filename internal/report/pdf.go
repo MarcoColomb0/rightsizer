@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/go-pdf/fpdf"
-	"github.com/marcocolombo/rightsizer/internal/analysis"
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goitalic"
 	"golang.org/x/image/font/gofont/goregular"
@@ -18,7 +18,7 @@ import (
 const (
 	Author  = "Marco Colombo"
 	Website = "https://marco.wf"
-	Project = "https://github.com/marcocolombo/rightsizer"
+	Project = "https://github.com/MarcoColomb0/rightsizer"
 )
 
 var Version = "dev"

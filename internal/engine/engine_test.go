@@ -14,8 +14,8 @@ import (
 
 	"github.com/vmware/govmomi/simulator"
 
-	"github.com/marcocolombo/rightsizer/internal/report"
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 func TestEndToEnd(t *testing.T) {

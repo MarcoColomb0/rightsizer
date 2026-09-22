@@ -45,7 +45,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/marcocolomb0/rightsizer
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -64,6 +64,6 @@ jobs:
           build-args: VERSION=${{ github.ref_name }}
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ghcr.io/${{ github.repository }}
+          subject-name: ghcr.io/marcocolomb0/rightsizer
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true

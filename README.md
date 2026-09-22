@@ -29,7 +29,7 @@ Results are live in the terminal console while data is collected, and exported a
 Requirements: a Linux host with Docker, HTTPS access to vCenter (443), and outbound access to `ghcr.io` or GitHub.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/marcocolombo/rightsizer/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/MarcoColomb0/rightsizer/main/install.sh | sudo bash
 ```
 
 Options: `--port 8443` (report download port), `--host name` (host name used in download links), `--bind 127.0.0.1`, `--tag v1.0.0`, `--build` (build the image from source).

@@ -1,4 +1,4 @@
-module github.com/marcocolombo/rightsizer
+module github.com/MarcoColomb0/rightsizer
 
 go 1.26.0
 

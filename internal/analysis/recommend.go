@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marcocolombo/rightsizer/internal/vc"
+	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
 type Profile struct {

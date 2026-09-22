@@ -8,9 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/marcocolombo/rightsizer/internal/analysis"
-	"github.com/marcocolombo/rightsizer/internal/engine"
-	"github.com/marcocolombo/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/engine"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
 )
 
 func render(t *testing.T, m Model) string {

@@ -15,10 +15,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/marcocolombo/rightsizer/internal/engine"
-	"github.com/marcocolombo/rightsizer/internal/ipc"
-	"github.com/marcocolombo/rightsizer/internal/report"
-	"github.com/marcocolombo/rightsizer/internal/tui"
+	"github.com/MarcoColomb0/rightsizer/internal/engine"
+	"github.com/MarcoColomb0/rightsizer/internal/ipc"
+	"github.com/MarcoColomb0/rightsizer/internal/report"
+	"github.com/MarcoColomb0/rightsizer/internal/tui"
 )
 
 var version = "dev"

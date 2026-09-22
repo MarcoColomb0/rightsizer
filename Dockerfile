@@ -14,7 +14,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="rightsizer" \
       org.opencontainers.image.description="Read-only vSphere rightsizing analysis" \
       org.opencontainers.image.authors="Marco Colombo <https://marco.wf>" \
-      org.opencontainers.image.source="https://github.com/marcocolombo/rightsizer" \
+      org.opencontainers.image.source="https://github.com/MarcoColomb0/rightsizer" \
       org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /out/rightsizer /usr/local/bin/rightsizer
 COPY --from=build --chown=65532:65532 --chmod=700 /out/data /data
