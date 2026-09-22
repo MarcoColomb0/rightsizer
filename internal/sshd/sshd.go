@@ -2,17 +2,22 @@ package sshd
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/ssh"
-	"github.com/charmbracelet/wish"
-	"github.com/charmbracelet/wish/activeterm"
-	bm "github.com/charmbracelet/wish/bubbletea"
+	"github.com/muesli/termenv"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -44,38 +49,71 @@ type Server struct {
 }
 
 func New(cfg Config) (*Server, error) {
-	s := &Server{cfg: cfg, fails: map[string][]time.Time{}}
-	srv, err := wish.NewServer(
-		wish.WithAddress(cfg.Listen),
-		wish.WithHostKeyPath(cfg.HostKeyPath),
-		wish.WithVersion("rightsizer"),
-		wish.WithBanner("rightsizer appliance - authorized access only\n"),
-		wish.WithPasswordAuth(s.password),
-		wish.WithIdleTimeout(30*time.Minute),
-		wish.WithMaxTimeout(12*time.Hour),
-		wish.WithMiddleware(
-			bm.Middleware(func(ssh.Session) (tea.Model, []tea.ProgramOption) {
-				return cfg.Program(), []tea.ProgramOption{tea.WithAltScreen()}
-			}),
-			activeterm.Middleware(),
-			s.gate,
-		),
-	)
+	signer, err := hostKey(cfg.HostKeyPath)
 	if err != nil {
 		return nil, err
 	}
-	srv.ServerConfigCallback = func(ssh.Context) *gossh.ServerConfig {
-		return &gossh.ServerConfig{
-			Config: gossh.Config{
-				KeyExchanges: []string{"mlkem768x25519-sha256", "curve25519-sha256", "curve25519-sha256@libssh.org"},
-				Ciphers:      []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com"},
-				MACs:         []string{"hmac-sha2-256-etm@openssh.com", "hmac-sha2-512-etm@openssh.com"},
-			},
-			MaxAuthTries: 3,
-		}
+	s := &Server{cfg: cfg, fails: map[string][]time.Time{}}
+	s.srv = &ssh.Server{
+		Addr:            cfg.Listen,
+		Version:         "rightsizer",
+		Banner:          "rightsizer appliance - authorized access only\n",
+		Handler:         s.handle,
+		PasswordHandler: s.password,
+		IdleTimeout:     30 * time.Minute,
+		MaxTimeout:      12 * time.Hour,
+		ServerConfigCallback: func(ssh.Context) *gossh.ServerConfig {
+			return &gossh.ServerConfig{
+				Config: gossh.Config{
+					KeyExchanges: []string{"mlkem768x25519-sha256", "curve25519-sha256", "curve25519-sha256@libssh.org"},
+					Ciphers:      []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com"},
+					MACs:         []string{"hmac-sha2-256-etm@openssh.com", "hmac-sha2-512-etm@openssh.com"},
+				},
+				MaxAuthTries: 3,
+			}
+		},
 	}
-	s.srv = srv
+	s.srv.AddHostKey(signer)
+	// Sessions render to the SSH client, not to the daemon's stdout, so
+	// colour support cannot be detected from the process; every current SSH
+	// terminal handles 256 colours.
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
 	return s, nil
+}
+
+// hostKey loads the Ed25519 host key, creating it on first start.
+func hostKey(path string) (gossh.Signer, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		block, err := gossh.MarshalPrivateKey(priv, "")
+		if err != nil {
+			return nil, err
+		}
+		b = pem.EncodeToMemory(block)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, err
+		}
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, b, 0o600); err != nil {
+			return nil, err
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			return nil, err
+		}
+		pub, err := gossh.NewPublicKey(priv.Public())
+		if err != nil {
+			return nil, err
+		}
+		_ = os.WriteFile(path+".pub", gossh.MarshalAuthorizedKey(pub), 0o600)
+	} else if err != nil {
+		return nil, err
+	}
+	return gossh.ParsePrivateKey(b)
 }
 
 func (s *Server) ListenAndServe() error {
@@ -136,26 +174,58 @@ func (s *Server) blocked(ip string) bool {
 	return len(recent) >= maxFails
 }
 
-// gate rejects commands and caps concurrent sessions before the console starts.
-func (s *Server) gate(next ssh.Handler) ssh.Handler {
-	return func(sess ssh.Session) {
-		if len(sess.RawCommand()) > 0 || sess.Subsystem() != "" {
-			wish.Fatalln(sess, "only the interactive console is available")
-			return
-		}
-		s.mu.Lock()
-		if s.sessions >= maxSessions {
-			s.mu.Unlock()
-			wish.Fatalln(sess, "too many open sessions")
-			return
-		}
-		s.sessions++
-		s.mu.Unlock()
-		defer func() {
-			s.mu.Lock()
-			s.sessions--
-			s.mu.Unlock()
-		}()
-		next(sess)
+func refuse(sess ssh.Session, msg string) {
+	fmt.Fprintln(sess.Stderr(), msg)
+	_ = sess.Exit(1)
+}
+
+// handle runs the console for one session. Commands, subsystems and
+// sessions without a terminal are refused before anything else happens.
+func (s *Server) handle(sess ssh.Session) {
+	if sess.RawCommand() != "" || sess.Subsystem() != "" {
+		refuse(sess, "only the interactive console is available")
+		return
 	}
+	pty, windows, ok := sess.Pty()
+	if !ok {
+		refuse(sess, "the console needs an interactive terminal (ssh -t)")
+		return
+	}
+	s.mu.Lock()
+	if s.sessions >= maxSessions {
+		s.mu.Unlock()
+		refuse(sess, "too many open sessions")
+		return
+	}
+	s.sessions++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.sessions--
+		s.mu.Unlock()
+	}()
+
+	p := tea.NewProgram(s.cfg.Program(), tea.WithInput(sess), tea.WithOutput(sess), tea.WithAltScreen())
+	ctx, cancel := context.WithCancel(sess.Context())
+	defer cancel()
+	go func() {
+		p.Send(tea.WindowSizeMsg{Width: pty.Window.Width, Height: pty.Window.Height})
+		for {
+			select {
+			case <-ctx.Done():
+				p.Quit()
+				return
+			case w, ok := <-windows:
+				if !ok {
+					return
+				}
+				p.Send(tea.WindowSizeMsg{Width: w.Width, Height: w.Height})
+			}
+		}
+	}()
+	if _, err := p.Run(); err != nil {
+		slog.Warn("console session ended with an error", "err", err)
+	}
+	p.Kill()
+	_ = sess.Exit(0)
 }
