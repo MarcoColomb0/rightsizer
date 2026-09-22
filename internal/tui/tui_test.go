@@ -47,11 +47,24 @@ func (f *fake) ChangePassword(o, n string) error {
 	return nil
 }
 
+func peaksDemo() *analysis.Peaks {
+	pk := &analysis.Peaks{SumPeakMHz: 420000, CombinedPeakMHz: 262000, Diversity: 1.6, NaiveHosts: 7, AwareHosts: 4,
+		CoPeak:        []analysis.Group{{VMs: []string{"sql-01", "sql-02"}, Host: "esx03", R: 0.93}},
+		Complementary: []analysis.Pair{{A: "batch-01", B: "web-01", R: -0.71}}}
+	for d := 0; d < 7; d++ {
+		for h := 0; h < 24; h++ {
+			pk.Heatmap[d][h], pk.HeatmapN[d][h] = float64(h*4), 1
+		}
+	}
+	return pk
+}
+
 func demo() *fake {
 	now := time.Now()
 	res := &analysis.Result{
-		Totals: analysis.Totals{VMs: 120, On: 110, VCPU: 480, RecVCPU: 260, MemMB: 1 << 20, RecMemMB: 600 << 10, Hosts: 8, HostsNeeded: 6, Cores: 256, NeedCores: 150, Reclaim: 2 << 40, Analyzed: 108},
-		Clusters: []analysis.ClusterResult{{Name: "prod-cl01", Hosts: 6, CPUP: 41, CPUPeak: 63, MemP: 58, VCPU: 300, RecVCPU: 170, MemMB: 600 << 10, RecMemMB: 380 << 10, HostsNeeded: 4, CapMHz: 1000,
+		Totals:  analysis.Totals{VMs: 120, On: 110, VCPU: 480, RecVCPU: 260, MemMB: 1 << 20, RecMemMB: 600 << 10, Hosts: 8, HostsNeeded: 6, Cores: 256, NeedCores: 150, Reclaim: 2 << 40, Analyzed: 108},
+		Preview: true,
+		Clusters: []analysis.ClusterResult{{Peaks: peaksDemo(), Name: "prod-cl01", Hosts: 6, CPUP: 41, CPUPeak: 63, MemP: 58, VCPU: 300, RecVCPU: 170, MemMB: 600 << 10, RecMemMB: 380 << 10, HostsNeeded: 4, CapMHz: 1000,
 			Points: []analysis.Point{{T: now, CPUMHz: 200}, {T: now.Add(time.Minute), CPUMHz: 600}}}},
 		Findings: []analysis.Finding{{VM: "sql-01", Kind: analysis.CPUOver, Severity: analysis.High, Current: "16 vCPU", Suggested: "6 vCPU", Confidence: "high"}},
 	}
@@ -120,8 +133,11 @@ func TestHomeAndSource(t *testing.T) {
 		t.Fatalf("enter must open the selected source, got %v %q", m.scr, m.cur)
 	}
 	view(t, m, "collecting", "480 → 260", "prod-cl01", "finish now")
+	view(t, m, "Preview based on vCenter history", "1.6×")
 	m = send(t, m, keys1("2"))
 	view(t, m, "sql-01")
+	m = send(t, m, keys1("3"))
+	view(t, m, "diversity", "1.60×", "if sized on the sum of peaks", "Peak together on esx03", "batch-01 + web-01", "Mon")
 	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.scr != scrHome {
 		t.Fatal("esc must go back home")

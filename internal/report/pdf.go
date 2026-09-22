@@ -66,6 +66,8 @@ func WritePDF(r *analysis.Result, path string) error {
 
 	d.cover()
 	d.refresh()
+	d.peaks()
+	d.waste()
 	d.findingSummary()
 	d.findings()
 	d.vmTable()
@@ -244,7 +246,12 @@ func (d *doc) cover() {
 		{"Physical cores", float64(t.Cores), float64(t.NeedCores), fmt.Sprint(t.Cores), fmt.Sprint(t.NeedCores)},
 		{"Hosts", float64(t.Hosts), float64(t.HostsNeeded), fmt.Sprint(t.Hosts), fmt.Sprint(t.HostsNeeded)},
 	})
-	if !r.Final {
+	if r.Preview {
+		d.Ln(3)
+		d.font("I", 8.5)
+		d.color(cWarn)
+		d.text(4.2, fmt.Sprintf("Preview: part of this report is based on vCenter's historical averages since %s (5-minute to 2-hour samples). Averages smooth out short peaks, so utilisation reads low and recommendations are optimistic. Each VM switches to 20-second data once it has 24 hours of it.", r.HistoryFrom.Format("2006-01-02")))
+	} else if !r.Final {
 		d.Ln(3)
 		d.font("I", 8.5)
 		d.color(cWarn)
@@ -389,6 +396,128 @@ func (d *doc) timeline(c analysis.ClusterResult) {
 	d.Ln(2)
 }
 
+func (d *doc) peaks() {
+	var cs []analysis.ClusterResult
+	for _, c := range d.r.Clusters {
+		if c.Peaks != nil && c.Peaks.CombinedPeakMHz > 0 {
+			cs = append(cs, c)
+		}
+	}
+	if len(cs) == 0 {
+		return
+	}
+	d.AddPage()
+	d.h1("Peak-aware sizing")
+	d.para("VMs rarely peak at the same moment. Sizing a cluster on the sum of every VM's own peak buys hardware for a moment that never happens. " +
+		"The diversity factor compares that sum with the peak of the VMs' combined demand, both measured the same way: 1.5× means the naive method asks for 50% more CPU than needed.")
+	rows := [][]string{}
+	for _, c := range cs {
+		pk := c.Peaks
+		rows = append(rows, []string{c.Name, ghz(pk.SumPeakMHz), ghz(pk.CombinedPeakMHz), fmt.Sprintf("%.2f×", pk.Diversity),
+			fmt.Sprint(pk.NaiveHosts), fmt.Sprint(pk.AwareHosts)})
+	}
+	d.table([]col{{"Cluster", 50, "L"}, {"Sum of VM peaks", 30, "R"}, {"Combined peak", 28, "R"}, {"Diversity", 20, "R"}, {"Hosts, naive", 24, "R"}, {"Hosts, peak-aware", 28, "R"}}, rows)
+	d.font("I", 7.5)
+	d.color(cMuted)
+	d.text(4, fmt.Sprintf("Host counts cover CPU only, at the %s profile's %.0f%% target, before memory sizing and the HA spare.", d.r.Profile.Name, d.r.Profile.HostCPU*100))
+	for _, c := range cs {
+		if d.GetY() > 200 {
+			d.AddPage()
+		}
+		d.h2(c.Name + ": demand by hour of week")
+		d.heatmap(c.Peaks)
+		for _, g := range c.Peaks.CoPeak {
+			d.font("", 8.5)
+			d.color(cWarn)
+			d.text(4.4, fmt.Sprintf("Peak together on %s (r %.2f): %s. Consider a DRS anti-affinity rule.", g.Host, g.R, strings.Join(g.VMs, ", ")))
+		}
+		for i, p := range c.Peaks.Complementary {
+			if i == 5 {
+				break
+			}
+			d.font("", 8.5)
+			d.color(cInk)
+			d.text(4.4, fmt.Sprintf("Complementary (r %.2f): %s and %s peak at different times and share a host well.", p.R, p.A, p.B))
+		}
+		d.Ln(2)
+	}
+}
+
+func (d *doc) heatmap(pk *analysis.Peaks) {
+	x0, y0 := margin+12, d.GetY()+1
+	cw, ch := (content-14)/24, 4.2
+	d.font("", 6.5)
+	d.color(cMuted)
+	for h := 0; h < 24; h += 3 {
+		d.SetXY(x0+float64(h)*cw, y0)
+		d.CellFormat(cw*3, 3, fmt.Sprintf("%02d:00", h), "", 0, "L", false, 0, "")
+	}
+	y0 += 4
+	for day, name := range []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"} {
+		d.SetXY(margin, y0+float64(day)*ch)
+		d.color(cMuted)
+		d.CellFormat(11, ch, name, "", 0, "L", false, 0, "")
+		for h := 0; h < 24; h++ {
+			c := cBand
+			if pk.HeatmapN[day][h] > 0 {
+				v := min(pk.Heatmap[day][h]/100, 1)
+				c = rgb{int(float64(cBand.r) + (float64(cAccent.r)-float64(cBand.r))*v), int(float64(cBand.g) + (float64(cAccent.g)-float64(cBand.g))*v), int(float64(cBand.b) + (float64(cAccent.b)-float64(cBand.b))*v)}
+				if pk.Heatmap[day][h] >= 80 {
+					c = cBad
+				}
+			}
+			d.fill(c)
+			d.Rect(x0+float64(h)*cw+0.15, y0+float64(day)*ch+0.15, cw-0.3, ch-0.3, "F")
+		}
+	}
+	d.SetY(y0 + 7*ch + 1)
+	d.font("", 7)
+	d.color(cMuted)
+	d.CellFormat(content, 4, "Average CPU demand as % of cluster capacity; darker is busier, red is 80% or more.", "", 1, "L", false, 0, "")
+	d.Ln(1)
+}
+
+func (d *doc) waste() {
+	r := d.r
+	if len(r.Orphans) == 0 && r.WasteNote == "" {
+		return
+	}
+	if d.GetY() > 180 {
+		d.AddPage()
+	} else {
+		d.Ln(4)
+	}
+	d.h1("Hidden waste")
+	if r.WasteNote != "" {
+		d.font("I", 8.5)
+		d.color(cWarn)
+		d.text(4.4, r.WasteNote)
+		d.Ln(1)
+	}
+	if len(r.Orphans) == 0 {
+		return
+	}
+	var total int64
+	rows := [][]string{}
+	for _, o := range r.Orphans {
+		total += o.Size
+		mod := ""
+		if !o.Modified.IsZero() {
+			mod = o.Modified.Format("2006-01-02")
+		}
+		rows = append(rows, []string{o.Path, analysis.Human(o.Size), mod})
+	}
+	files := "virtual disk files are"
+	if len(r.Orphans) == 1 {
+		files = "virtual disk file is"
+	}
+	d.para(fmt.Sprintf("%d %s (%s) not used by any VM or template registered in this vCenter. "+
+		"Before deleting one, check that it does not belong to another vCenter sharing the datastore, a backup or replication product, or a VM being restored.", len(r.Orphans), files, analysis.Human(total)))
+	d.table([]col{{"Disk", 120, "L"}, {"Size", 25, "R"}, {"Last changed", 30, "R"}}, rows)
+}
+
+func ghz(mhz float64) string { return fmt.Sprintf("%.0f GHz", mhz/1000) }
+
 func (d *doc) findingSummary() {
 	d.AddPage()
 	d.h1("Findings")
@@ -495,12 +624,12 @@ func (d *doc) vmTable() {
 			v.Name, v.Cluster,
 			arrow(fmt.Sprint(v.VCPU), fmt.Sprint(v.RecVCPU)), arrow(analysis.GiB(v.MemMB), analysis.GiB(v.RecMemMB)),
 			fmt.Sprintf("%.0f%%", v.CPUP), fmt.Sprintf("%.0f%%", v.CPUMax), fmt.Sprintf("%.0f%%", v.MemP),
-			fmt.Sprintf("%.1f%%", v.ReadyAvg), fmt.Sprintf("%.0fh", v.Hours),
+			fmt.Sprintf("%.1f%%", v.ReadyAvg), dataLabel(v),
 		})
 	}
 	d.table([]col{
 		{"VM", 44, "L"}, {"Cluster", 28, "L"}, {"vCPU", 16, "R"}, {"Memory", 24, "R"},
-		{"CPU " + pc, 15, "R"}, {"CPU max", 14, "R"}, {"Mem " + pc, 15, "R"}, {"Ready", 12, "R"}, {"Data", 12, "R"},
+		{"CPU " + pc, 15, "R"}, {"CPU max", 14, "R"}, {"Mem " + pc, 15, "R"}, {"Ready", 11, "R"}, {"Data", 14, "R"},
 	}, rows)
 }
 
@@ -520,6 +649,11 @@ func (d *doc) method() {
 		"Thick disks: ≥ 20 GB thick-provisioned while the guest file systems are less than 50% used.",
 		fmt.Sprintf("Clusters: CPU need = cluster demand p%.0f ÷ %.0f%%; memory need = recommended VM memory + 5%% overhead ÷ %.0f%%; plus one HA host.", p.Percentile, p.HostCPU*100, p.HostMem*100),
 		"Confidence: high with ≥ 72 h of data covering ≥ 80% of the window (capped at 7 days), medium with ≥ 24 h, low otherwise.",
+		"NUMA: a VM is flagged when its vCPUs exceed the cores of one physical NUMA node, or its memory exceeds one node's memory.",
+		"Co-stop: average co-stop of 3% or more per vCPU on a multi-vCPU VM means it waits for enough free cores; fewer vCPUs make it faster.",
+		"Peak-aware sizing: diversity = sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of the VMs' combined demand. VMs whose 30-minute demand correlates at 0.8 or more on the same host are reported as co-peaking; -0.4 or less as complementary.",
+		"Orphaned disks: .vmdk files on accessible datastores that no registered VM, template or snapshot references. First-class disks and replication, HA and vSAN system folders are ignored. Needs the Browse datastore privilege.",
+		"Preview: until a VM has 24 hours of 20-second data, results use vCenter's stored history for the previous 14 days, read at the finest interval available for each period and weighted by the time each sample covers.",
 	}
 	for _, s := range rules {
 		d.font("", 8.8)
@@ -600,6 +734,13 @@ func (d *doc) fit(s string, w float64) string {
 		r = r[:len(r)-1]
 	}
 	return string(r) + "…"
+}
+
+func dataLabel(v analysis.VMResult) string {
+	if v.Preview {
+		return fmt.Sprintf("%.0fh hist", v.Hours)
+	}
+	return fmt.Sprintf("%.0fh", v.Hours)
 }
 
 func sevOf(s string) analysis.Severity {

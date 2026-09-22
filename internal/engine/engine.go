@@ -38,6 +38,8 @@ const (
 var (
 	pollEvery      = 5 * time.Minute
 	inventoryEvery = time.Hour
+	wasteEvery     = 24 * time.Hour
+	historyBack    = 14 * 24 * time.Hour
 )
 
 type Config struct {
@@ -64,6 +66,12 @@ type state struct {
 	Inventory *vc.Inventory
 	Store     *analysis.Store
 	Report    string
+
+	History      *analysis.Store
+	HistoryState string
+	Orphans      []vc.OrphanDisk
+	WasteNote    string
+	WasteScanned time.Time
 }
 
 type Status struct {
@@ -80,6 +88,8 @@ type Status struct {
 	LastError  string
 	Totals     *analysis.Totals
 	Findings   int
+	Preview    bool
+	History    string
 	Result     *analysis.Result
 	ReportFile string
 }

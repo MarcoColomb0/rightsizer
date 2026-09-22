@@ -46,6 +46,10 @@ const (
 	PoweredOff Kind = "Powered-off VM"
 	OldSnap    Kind = "Old snapshot"
 	ThickDisk  Kind = "Thick disk, low usage"
+	Orphan     Kind = "Orphaned disk"
+	WideVM     Kind = "Spans NUMA nodes"
+	CoStopHigh Kind = "High co-stop"
+	CoPeak     Kind = "Co-peaking VMs"
 )
 
 type Severity int
@@ -86,12 +90,16 @@ type VMResult struct {
 	CPUMax     float64
 	MemP       float64
 	ReadyAvg   float64
+	CoStopAvg  float64
 	Hours      float64
 	Confidence string
+	Preview    bool
 }
 
 type ClusterResult struct {
 	Name        string
+	Preview     bool
+	Peaks       *Peaks
 	Hosts       int
 	CPUModel    string
 	Cores       int
@@ -136,14 +144,70 @@ type Result struct {
 	Findings  []Finding
 	VMs       []VMResult
 	Clusters  []ClusterResult
+	// Preview is set while some results still come from vCenter's
+	// historical averages instead of 20-second samples.
+	Preview     bool
+	HistoryFrom time.Time
+	Orphans     []vc.OrphanDisk
+	WasteNote   string
+}
+
+// Input is everything one analysis is computed from. History holds vCenter's
+// rolled-up statistics for the period before the analysis started.
+type Input struct {
+	Inv       *vc.Inventory
+	RT        *Store
+	History   *Store
+	Orphans   []vc.OrphanDisk
+	WasteNote string
+	Profile   Profile
+	Start     time.Time
+	End       time.Time
+	Planned   time.Duration
+}
+
+// fullDay is the number of 20-second samples in 24 hours.
+const fullDay = 24 * 3600 / 20
+
+func (in Input) vmStats(ref string) (*VMStats, bool) {
+	var rt, h *VMStats
+	if in.RT != nil {
+		rt = in.RT.VMs[ref]
+	}
+	if in.History != nil {
+		h = in.History.VMs[ref]
+	}
+	switch {
+	case rt != nil && rt.Samples >= fullDay:
+		return rt, false
+	case h != nil && (rt == nil || h.Samples > rt.Samples):
+		return h, true
+	}
+	return rt, false
+}
+
+func (in Input) clusterStore(name string) (*Store, bool) {
+	if in.RT != nil {
+		if cs := in.RT.Clusters[name]; cs != nil && cs.CPU.N >= fullDay {
+			return in.RT, false
+		}
+	}
+	if in.History != nil && in.History.Clusters[name] != nil {
+		return in.History, true
+	}
+	return in.RT, false
 }
 
 const minHours = 1.0
 
-func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, planned time.Duration) *Result {
-	r := &Result{Generated: time.Now(), Start: start, End: end, Planned: planned, Profile: p}
+func Analyze(in Input) *Result {
+	p, inv, start, end := in.Profile, in.Inv, in.Start, in.End
+	r := &Result{Generated: time.Now(), Start: start, End: end, Planned: in.Planned, Profile: p, Orphans: in.Orphans, WasteNote: in.WasteNote}
 	if inv == nil {
 		return r
+	}
+	if in.History != nil {
+		r.HistoryFrom = in.History.Anchor
 	}
 	window := hoursBetween(start, end)
 	cl := map[string]*ClusterResult{}
@@ -156,7 +220,9 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 		return c
 	}
 	models := map[string]map[string]int{}
+	hosts := map[string]vc.Host{}
 	for _, h := range inv.Hosts {
+		hosts[h.Name] = h
 		if !h.Connected {
 			continue
 		}
@@ -172,6 +238,7 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 	}
 
 	t := &r.Totals
+	vmsByCluster := map[string][]vc.VM{}
 	for _, vm := range inv.VMs {
 		t.VMs++
 		if vm.Template {
@@ -180,9 +247,9 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 		}
 		t.Storage += vm.Committed
 		r.Findings = append(r.Findings, storageFindings(vm, end)...)
+		s, preview := in.vmStats(vm.Ref)
 		if !vm.PowerOn {
 			t.Off++
-			s := st.VMs[vm.Ref]
 			if s == nil || s.Samples == 0 {
 				r.Findings = append(r.Findings, Finding{
 					VM: vm.Name, Cluster: vm.Cluster, Kind: PoweredOff, Severity: sevBytes(vm.Committed),
@@ -196,7 +263,7 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 		} else {
 			t.On++
 		}
-		s := st.VMs[vm.Ref]
+		vmsByCluster[vm.Cluster] = append(vmsByCluster[vm.Cluster], vm)
 		c := getCl(vm.Cluster)
 		c.VCPU += vm.VCPU
 		c.MemMB += vm.MemMB
@@ -211,6 +278,14 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 		}
 		t.Analyzed++
 		vr, fs := rightsize(vm, s, p, window)
+		if preview {
+			vr.Preview, vr.Confidence = true, "preview"
+			for i := range fs {
+				fs[i].Confidence = "preview"
+			}
+			r.Preview = true
+		}
+		fs = append(fs, placementFindings(vm, vr, s, hosts[vm.Host])...)
 		r.VMs = append(r.VMs, vr)
 		r.Findings = append(r.Findings, fs...)
 		c.RecVCPU += vr.RecVCPU
@@ -226,17 +301,31 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 	}
 
 	for name, c := range cl {
-		cs := st.Clusters[name]
+		st, preview := in.clusterStore(name)
+		var cs *ClusterStats
+		if st != nil {
+			cs = st.Clusters[name]
+		}
+		if preview {
+			r.Preview = true
+		}
 		c.CPUModel = topModel(models[name])
+		c.Preview = preview
 		sizeCluster(c, cs, p)
+		c.Points = mergePoints(in, name)
+		c.Peaks = peaks(c, vmsByCluster[name], st, p)
+		c.Points = Downsample(c.Points, 336)
+		r.Findings = append(r.Findings, coPeakFindings(*c)...)
 		r.Clusters = append(r.Clusters, *c)
 		t.Hosts += c.Hosts
 		t.HostsNeeded += c.HostsNeeded
 		t.Cores += c.Cores
 		t.NeedCores += c.NeedCores
 	}
+	r.Findings = append(r.Findings, orphanFindings(in.Orphans)...)
 	for _, f := range r.Findings {
-		if f.Kind == PoweredOff || f.Kind == OldSnap || f.Kind == ThickDisk {
+		switch f.Kind {
+		case PoweredOff, OldSnap, ThickDisk, Orphan:
 			t.Reclaim += f.Bytes
 		}
 	}
@@ -251,13 +340,98 @@ func Analyze(inv *vc.Inventory, st *Store, p Profile, start, end time.Time, plan
 	return r
 }
 
+// mergePoints joins the historical and real-time demand timelines.
+func mergePoints(in Input, name string) []Point {
+	var out []Point
+	var rtStart time.Time
+	if in.RT != nil {
+		if cs := in.RT.Clusters[name]; cs != nil && len(cs.Points) > 0 {
+			rtStart = cs.Points[0].T
+		}
+	}
+	if in.History != nil {
+		if cs := in.History.Clusters[name]; cs != nil {
+			for _, p := range cs.Points {
+				if rtStart.IsZero() || p.T.Before(rtStart) {
+					out = append(out, p)
+				}
+			}
+		}
+	}
+	if in.RT != nil {
+		if cs := in.RT.Clusters[name]; cs != nil {
+			out = append(out, cs.Points...)
+		}
+	}
+	return out
+}
+
+// placementFindings flag VMs that are slow because of their shape: wider than
+// a NUMA node, or waiting for enough free cores to run all vCPUs together.
+func placementFindings(vm vc.VM, vr VMResult, s *VMStats, h vc.Host) []Finding {
+	var fs []Finding
+	base := Finding{VM: vm.Name, Cluster: vm.Cluster, Confidence: vr.Confidence}
+	if h.Cores > 0 && h.NUMANodes > 0 {
+		perNode := h.Cores / h.NUMANodes
+		memNode := h.MemBytes / int64(h.NUMANodes)
+		wideCPU := perNode > 0 && vm.VCPU > perNode
+		wideMem := memNode > 0 && int64(vm.MemMB)<<20 > memNode
+		if wideCPU || wideMem {
+			f := base
+			f.Kind, f.Severity = WideVM, Medium
+			f.Current = fmt.Sprintf("%d vCPU / %s on %d-core, %s NUMA nodes", vm.VCPU, gib(vm.MemMB), perNode, human(memNode))
+			switch {
+			case wideCPU && vr.RecVCPU <= perNode && !wideMem:
+				f.Suggested = fmt.Sprintf("Rightsize to %d vCPU", vr.RecVCPU)
+				f.Detail = fmt.Sprintf("The VM is wider than one NUMA node of %s, so some memory access is remote. The recommended %d vCPU fit in a single node.", vm.Host, vr.RecVCPU)
+			case wideCPU:
+				sockets := (vm.VCPU + perNode - 1) / perNode
+				f.Suggested = fmt.Sprintf("Align to %d sockets", sockets)
+				f.Detail = fmt.Sprintf("The VM needs more vCPU than one NUMA node of %s has (%d cores). Set cores per socket so each virtual socket fits in a node (currently %d cores per socket) so the guest sees the real topology.", vm.Host, perNode, vm.CoresPerSock)
+			default:
+				f.Suggested = "Reduce memory or align vNUMA"
+				f.Detail = fmt.Sprintf("Configured memory exceeds the %s of one NUMA node on %s, so part of it is remote.", human(memNode), vm.Host)
+			}
+			fs = append(fs, f)
+		}
+	}
+	if cs := s.CoStop.Avg(); cs >= 3 && vm.VCPU >= 2 {
+		f := base
+		f.Kind, f.Severity = CoStopHigh, High
+		f.Current = fmt.Sprintf("%d vCPU, co-stop %.1f%%", vm.VCPU, cs)
+		f.Suggested = fmt.Sprintf("Reduce to %d vCPU", min(vr.RecVCPU, vm.VCPU-1))
+		f.Detail = "The hypervisor often has to pause some vCPUs while it waits for enough free cores to run them all together. Fewer vCPUs will make this VM faster, not slower."
+		fs = append(fs, f)
+	}
+	return fs
+}
+
+func orphanFindings(os []vc.OrphanDisk) []Finding {
+	var fs []Finding
+	for _, o := range os {
+		size := max(o.Size, 0)
+		age := ""
+		if !o.Modified.IsZero() {
+			age = fmt.Sprintf(", last changed %s", o.Modified.Format("2006-01-02"))
+		}
+		fs = append(fs, Finding{
+			VM: o.Path, Cluster: o.Datastore, Kind: Orphan, Severity: sevBytes(size),
+			Current:   fmt.Sprintf("%s on %s%s", human(size), o.Datastore, age),
+			Suggested: "Verify and delete",
+			Detail:    "No VM or template registered in this vCenter uses this disk. Check that it does not belong to a VM in another vCenter, a backup or replication product, or a VM that is being restored before deleting it.",
+			Bytes:     size, Confidence: "medium",
+		})
+	}
+	return fs
+}
+
 func rightsize(vm vc.VM, s *VMStats, p Profile, window float64) (VMResult, []Finding) {
 	h := s.Hours()
 	cf := conf(h, window)
 	vr := VMResult{
 		Name: vm.Name, Cluster: vm.Cluster, PowerOn: vm.PowerOn, VCPU: vm.VCPU, MemMB: vm.MemMB,
 		CPUP: s.CPU.Pct(p.Percentile), CPUMax: s.CPU.Max, MemP: s.Mem.Pct(p.Percentile),
-		ReadyAvg: s.Ready.Avg(), Hours: h, Confidence: cf, RecVCPU: vm.VCPU, RecMemMB: vm.MemMB,
+		ReadyAvg: s.Ready.Avg(), CoStopAvg: s.CoStop.Avg(), Hours: h, Confidence: cf, RecVCPU: vm.VCPU, RecMemMB: vm.MemMB,
 	}
 	var fs []Finding
 	base := Finding{VM: vm.Name, Cluster: vm.Cluster, Confidence: cf}
@@ -390,7 +564,6 @@ func sizeCluster(c *ClusterResult, cs *ClusterStats, p Profile) {
 		c.CPUP = cs.CPU.Pct(p.Percentile)
 		c.CPUPeak = cs.CPU.Max
 		c.MemP = cs.Mem.Pct(p.Percentile)
-		c.Points = Downsample(cs.Points, 336)
 	}
 	perHostMHz := c.CapMHz / float64(c.Hosts)
 	perHostMem := c.CapMemB / float64(c.Hosts)

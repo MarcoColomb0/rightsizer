@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +42,7 @@ func (s *Source) status(full bool) Status {
 	st := Status{
 		ID: s.id, Phase: s.st.Phase, Config: s.st.Config, Started: s.st.Started, Ends: s.st.Ends,
 		Finished: s.st.Finished, About: s.st.About, LastPoll: s.lastPoll, NextPoll: s.nextPoll,
-		LastError: s.lastErr, ReportFile: s.st.Report,
+		LastError: s.lastErr, ReportFile: s.st.Report, History: s.st.HistoryState,
 	}
 	if s.st.Store != nil {
 		st.Polls = s.st.Store.Polls
@@ -50,6 +51,7 @@ func (s *Source) status(full bool) Status {
 		t := s.result.Totals
 		st.Totals = &t
 		st.Findings = len(s.result.Findings)
+		st.Preview = s.result.Preview
 		if full {
 			r := *s.result
 			r.VMs = nil
@@ -76,7 +78,7 @@ func (s *Source) begin(cl *vc.Client) {
 	now := time.Now()
 	s.mu.Lock()
 	s.st.Phase, s.st.Started, s.st.Ends = Running, now, now.Add(s.st.Config.Duration)
-	s.st.About, s.st.Store = cl.About(), analysis.NewStore()
+	s.st.About, s.st.Store = cl.About(), analysis.NewStore(now)
 	s.client = cl
 	_ = s.save()
 	s.mu.Unlock()
@@ -103,11 +105,128 @@ func (s *Source) run() {
 	s.mu.Lock()
 	s.cancel = cancel
 	s.mu.Unlock()
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
 		s.loop(ctx)
 	}()
+	go func() {
+		defer s.wg.Done()
+		s.background(ctx)
+	}()
+}
+
+// background imports vCenter's history once and scans datastores for
+// orphaned disks every day, without delaying the 5-minute polls.
+func (s *Source) background(ctx context.Context) {
+	for {
+		s.mu.Lock()
+		cl, inv, hist := s.client, s.st.Inventory, s.st.HistoryState
+		scanned := s.st.WasteScanned
+		s.mu.Unlock()
+		wait := time.Minute
+		if cl == nil || inv == nil {
+			wait = 2 * time.Second
+		} else {
+			if hist == "" || strings.HasPrefix(hist, "loading") {
+				s.importHistory(ctx, cl, inv)
+			}
+			if time.Since(scanned) >= wasteEvery {
+				s.scanWaste(ctx, cl, inv)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
+func (s *Source) setHistory(state string) {
+	s.mu.Lock()
+	s.st.HistoryState = state
+	s.mu.Unlock()
+}
+
+func (s *Source) importHistory(ctx context.Context, cl *vc.Client, inv *vc.Inventory) {
+	s.setHistory("loading")
+	plan, err := cl.HistoryPlan(ctx, historyBack)
+	if err != nil || len(plan) == 0 {
+		if ctx.Err() == nil {
+			slog.Warn("vCenter history unavailable", "source", s.id, "err", err)
+			s.setHistory("unavailable")
+		}
+		return
+	}
+	oldest := plan[len(plan)-1].Start
+	hist := analysis.NewStore(oldest)
+	var vms, hosts []string
+	vcpu := map[string]int{}
+	for _, v := range inv.VMs {
+		if !v.Template {
+			vms = append(vms, v.Ref)
+			vcpu[v.Ref] = v.VCPU
+		}
+	}
+	for _, h := range inv.Hosts {
+		if h.Connected {
+			hosts = append(hosts, h.Ref)
+		}
+	}
+	hc, cp := analysis.Capacity(inv)
+	// Oldest window first: samples older than the last one seen are ignored.
+	for i := len(plan) - 1; i >= 0; i-- {
+		w := plan[i]
+		s.setHistory(fmt.Sprintf("loading %d%%", (len(plan)-1-i)*100/len(plan)))
+		vs, err := cl.History(ctx, "VirtualMachine", vms, vc.HistoryVMMetrics, w)
+		if err == nil {
+			var hs []vc.Series
+			hs, err = cl.History(ctx, "HostSystem", hosts, vc.HostMetrics, w)
+			for _, v := range vs {
+				hist.AddVM(v, vcpu[v.Ref])
+			}
+			hist.AddHosts(hs, hc, cp)
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Warn("vCenter history import failed", "source", s.id, "interval", w.Interval, "err", err)
+			s.setHistory("unavailable")
+			return
+		}
+	}
+	for _, c := range hist.Clusters {
+		c.Flush()
+	}
+	s.mu.Lock()
+	s.st.History = hist
+	s.st.HistoryState = fmt.Sprintf("imported from %s", oldest.Local().Format("Jan 02"))
+	_ = s.save()
+	s.mu.Unlock()
+	slog.Info("vCenter history imported", "source", s.id, "from", oldest)
+	s.refreshResult()
+}
+
+func (s *Source) scanWaste(ctx context.Context, cl *vc.Client, inv *vc.Inventory) {
+	orphans, err := cl.OrphanedDisks(ctx, inv)
+	if ctx.Err() != nil {
+		return
+	}
+	note := ""
+	switch {
+	case errors.Is(err, vc.ErrNoBrowse):
+		note = "Orphaned disk check skipped: " + err.Error() + "."
+	case err != nil:
+		note = "Orphaned disk check incomplete: " + err.Error()
+		slog.Warn("datastore scan", "source", s.id, "err", err)
+	}
+	s.mu.Lock()
+	s.st.Orphans, s.st.WasteNote, s.st.WasteScanned = orphans, note, time.Now()
+	_ = s.save()
+	s.mu.Unlock()
+	s.refreshResult()
 }
 
 func (s *Source) stop() {
@@ -317,7 +436,12 @@ func (s *Source) refreshResult() {
 	if !s.st.Finished.IsZero() {
 		end = s.st.Finished
 	}
-	r := analysis.Analyze(s.st.Inventory, s.st.Store, analysis.ProfileByName(s.st.Config.Profile), s.st.Started, end, s.st.Config.Duration)
+	r := analysis.Analyze(analysis.Input{
+		Inv: s.st.Inventory, RT: s.st.Store, History: s.st.History,
+		Orphans: s.st.Orphans, WasteNote: s.st.WasteNote,
+		Profile: analysis.ProfileByName(s.st.Config.Profile),
+		Start:   s.st.Started, End: end, Planned: s.st.Config.Duration,
+	})
 	r.Final = s.st.Phase == Done
 	r.VCenter = fmt.Sprintf("%s — %s", s.st.Config.Host, s.st.About)
 	s.result = r

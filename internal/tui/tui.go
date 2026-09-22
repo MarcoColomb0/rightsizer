@@ -505,8 +505,10 @@ func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tab = 0
 	case "2":
 		m.tab = 1
+	case "3":
+		m.tab = 2
 	case "tab":
-		m.tab = 1 - m.tab
+		m.tab = (m.tab + 1) % 3
 	case "p":
 		return m.busyCmd("Building the PDF report…", "publish", id, func() error {
 			_, err := m.b.Publish(id)

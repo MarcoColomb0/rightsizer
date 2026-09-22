@@ -152,7 +152,11 @@ func progressText(s engine.Status) string {
 		return ""
 	}
 	frac := min(float64(time.Since(s.Started))/float64(total), 1)
-	return fmt.Sprintf("%3.0f%% · %s left", frac*100, human(time.Until(s.Ends)))
+	out := fmt.Sprintf("%3.0f%% · %s left", frac*100, human(time.Until(s.Ends)))
+	if s.Preview {
+		out = fmt.Sprintf("%3.0f%% · preview", frac*100)
+	}
+	return out
 }
 
 func sharesBox(shares []report.Share, sources []engine.Status) string {
@@ -330,10 +334,14 @@ func (m Model) viewSource() string {
 	} else {
 		b.WriteString(m.spin.View() + sMuted.Render(" Waiting for the first samples…") + "\n\n")
 	}
+	if s.Result != nil && s.Result.Preview {
+		b.WriteString(sWarn.Render("Preview based on vCenter history (5-minute to 2-hour averages): peaks are smoothed and read low.") + "\n")
+		b.WriteString(sMuted.Render("Each VM switches to 20-second data once it has 24 hours of it.") + "\n\n")
+	}
 	if sh := m.shares(s.ID); len(sh) > 0 {
 		b.WriteString(sharesBox(sh, []engine.Status{*s}) + "\n")
 	}
-	tabs := []string{"1 Clusters", "2 Findings"}
+	tabs := []string{"1 Clusters", "2 Findings", "3 Peaks"}
 	for i, t := range tabs {
 		if i == m.tab {
 			tabs[i] = sTabOn.Render(t)
@@ -342,10 +350,19 @@ func (m Model) viewSource() string {
 		}
 	}
 	b.WriteString(strings.Join(tabs, "   ") + sMuted.Render(fmt.Sprintf("   (%d findings)", s.Findings)) + "\n\n")
-	if m.tab == 0 {
+	switch m.tab {
+	case 0:
 		b.WriteString(clusters(s.Result))
-	} else {
+		if s.History != "" {
+			b.WriteString("\n\n" + sMuted.Render("vCenter history: "+s.History))
+		}
+		if s.Result != nil && s.Result.WasteNote != "" {
+			b.WriteString("\n" + sWarn.Render(s.Result.WasteNote))
+		}
+	case 1:
 		b.WriteString(m.tbl.View())
+	case 2:
+		b.WriteString(peaksView(s.Result))
 	}
 	b.WriteString("\n\n")
 	switch m.confirm {
@@ -356,7 +373,7 @@ func (m Model) viewSource() string {
 		b.WriteString(sBad.Render("Remove this source with all its data and reports? [y/N]"))
 		return b.String()
 	}
-	k := []string{"esc", "back", "1/2", "tabs", "p", "PDF"}
+	k := []string{"esc", "back", "1-3", "tabs", "p", "PDF"}
 	if len(m.shares(s.ID)) > 0 {
 		k = append(k, "s", "stop sharing")
 	}
@@ -454,26 +471,30 @@ func clusters(r *analysis.Result) string {
 	if r == nil || len(r.Clusters) == 0 {
 		return sMuted.Render("No cluster data yet.")
 	}
-	head := fmt.Sprintf("%-22s %6s %9s %7s %13s %19s %9s  %s", "Cluster", "Hosts", "CPU p/pk", "Mem p", "vCPU", "Memory", "Need", "CPU trend")
+	head := fmt.Sprintf("%-22s %6s %9s %7s %13s %19s %6s %6s  %s", "Cluster", "Hosts", "CPU p/pk", "Mem p", "vCPU", "Memory", "Need", "Div", "CPU trend")
 	rows := []string{sMuted.Render(head)}
 	for _, c := range r.Clusters {
 		name := c.Name
 		if len([]rune(name)) > 22 {
 			name = string([]rune(name)[:21]) + "…"
 		}
-		need := fmt.Sprintf("%9d", c.HostsNeeded)
+		need := fmt.Sprintf("%6d", c.HostsNeeded)
 		switch {
 		case c.HostsNeeded < c.Hosts:
 			need = sAccent.Render(need)
 		case c.HostsNeeded > c.Hosts:
 			need = sWarn.Render(need)
 		}
-		rows = append(rows, fmt.Sprintf("%-22s %6d %9s %7s %13s %19s %s  %s",
+		div := "–"
+		if c.Peaks != nil && c.Peaks.Diversity > 0 {
+			div = fmt.Sprintf("%.1f×", c.Peaks.Diversity)
+		}
+		rows = append(rows, fmt.Sprintf("%-22s %6d %9s %7s %13s %19s %s %6s  %s",
 			name, c.Hosts,
 			fmt.Sprintf("%.0f/%.0f%%", c.CPUP, c.CPUPeak), fmt.Sprintf("%.0f%%", c.MemP),
 			fmt.Sprintf("%d→%d", c.VCPU, c.RecVCPU),
 			fmt.Sprintf("%s→%s", analysis.GiB(c.MemMB), analysis.GiB(c.RecMemMB)),
-			need, sAccent.Render(spark(c.Points, c.CapMHz))))
+			need, div, sAccent.Render(spark(c.Points, c.CapMHz))))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -491,3 +512,50 @@ func human(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
+
+var shades = []rune(" ░▒▓█")
+
+func peaksView(r *analysis.Result) string {
+	if r == nil {
+		return sMuted.Render("No data yet.")
+	}
+	var b strings.Builder
+	for _, c := range r.Clusters {
+		pk := c.Peaks
+		if pk == nil {
+			continue
+		}
+		b.WriteString(sBold.Render(c.Name) + "\n")
+		b.WriteString(fmt.Sprintf("  Sum of VM peaks %s · combined peak %s · diversity %s\n",
+			ghz(pk.SumPeakMHz), ghz(pk.CombinedPeakMHz), sAccent.Render(fmt.Sprintf("%.2f×", pk.Diversity))))
+		b.WriteString(fmt.Sprintf("  Hosts for CPU: %d if sized on the sum of peaks, %s peak-aware\n", pk.NaiveHosts, sAccent.Render(fmt.Sprint(pk.AwareHosts))))
+		b.WriteString(sMuted.Render("        00    03    06    09    12    15    18    21") + "\n")
+		for d, day := range []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"} {
+			var row strings.Builder
+			for h := 0; h < 24; h++ {
+				i := 0
+				if pk.HeatmapN[d][h] > 0 {
+					i = 1 + int(min(pk.Heatmap[d][h]/100, 0.999)*float64(len(shades)-1))
+				}
+				row.WriteString(strings.Repeat(string(shades[min(i, len(shades)-1)]), 2))
+			}
+			b.WriteString("  " + sMuted.Render(day) + "   " + sAccent.Render(row.String()) + "\n")
+		}
+		for _, g := range pk.CoPeak {
+			b.WriteString("  " + sWarn.Render("Peak together on "+g.Host+": ") + strings.Join(g.VMs, ", ") + "\n")
+		}
+		for i, p := range pk.Complementary {
+			if i == 3 {
+				break
+			}
+			b.WriteString("  " + sMuted.Render(fmt.Sprintf("Good host mates (r %.2f): ", p.R)) + p.A + " + " + p.B + "\n")
+		}
+		b.WriteString("\n")
+	}
+	if b.Len() == 0 {
+		return sMuted.Render("Peak analysis needs at least an hour of data.")
+	}
+	return b.String()
+}
+
+func ghz(mhz float64) string { return fmt.Sprintf("%.0f GHz", mhz/1000) }

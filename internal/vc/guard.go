@@ -26,6 +26,8 @@ var allowed = map[string]bool{
 	"QueryPerfCounter":             true,
 	"QueryAvailablePerfMetric":     true,
 	"QueryPerfProviderSummary":     true,
+	// Datastore search starts a task that only lists files.
+	"SearchDatastoreSubFolders_Task": true,
 }
 
 type ReadOnlyError struct{ Method string }

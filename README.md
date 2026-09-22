@@ -11,7 +11,9 @@ rightsizer watches one or more VMware vCenters for 24 hours to 14 days, compares
 
 - **VM rightsizing:** oversized and undersized vCPU and memory, with a confidence level for each recommendation.
 - **Refresh sizing:** required GHz, cores, RAM and hosts per cluster, including an HA spare. The figures are hardware-neutral, so you can apply them to any server model.
-- **Waste:** idle VMs, VMs powered off for the whole window, old snapshots, and thick disks that are mostly empty.
+- **Peak-aware sizing:** VMs rarely peak at the same time. rightsizer measures how much less CPU a cluster needs than the sum of its VMs' peaks (the diversity factor), and shows an hour-of-week demand heatmap. It also finds VMs that peak together on the same host (spread them with DRS) and VMs that peak at different times (good host mates).
+- **Day-one preview:** when an analysis starts, rightsizer imports the last 14 days of history stored in vCenter, so first results are available within minutes. Each VM switches to precise 20-second data once it has 24 hours of it.
+- **Hidden waste:** orphaned virtual disks that no VM uses, VMs wider than a NUMA node, VMs slowed down by CPU co-stop, idle VMs, VMs powered off for the whole window, old snapshots, and thick disks that are mostly empty.
 - **Several vCenters:** analyse many at once, with a report per vCenter or one combined report.
 - **Live console:** a terminal UI shows progress and findings while data is collected.
 - **PDF report:** executive summary, per-cluster charts, prioritised findings and methodology.
@@ -78,17 +80,19 @@ rightsizer
 
 ## Using the console
 
-1. Press `a` to add a vCenter. Enter its address, a user with the built-in **Read-only** role, the duration and a sizing profile.
+1. Press `a` to add a vCenter. Enter its address, a user with the built-in **Read-only** role, the duration and a sizing profile. To also find orphaned disks, give that role the **Datastore > Browse datastore** privilege. Everything else works without it.
 2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
 3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
 
-On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, and `s` stops sharing reports. Inside a vCenter, `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, and `s` stops sharing reports. Inside a vCenter, the tabs show clusters (`1`), findings (`2`) and peak analysis (`3`). `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+
+Results marked **preview** come from vCenter's stored averages (5-minute to 2-hour samples). Averages smooth out short peaks, so preview utilisation reads low. Treat preview recommendations as a first look.
 
 A PDF is offered for download on a temporary HTTPS link shown in the console. When an analysis ends, its final report is shared automatically.
 
 ## Security
 
-- **Read-only by construction.** Every vSphere call passes an allowlist of read methods, and anything else is blocked before it leaves the process. A test checks that power and delete operations are refused.
+- **Read-only by construction.** Every vSphere call passes an allowlist of read methods, and anything else is blocked before it leaves the process. The only task it may start is a datastore file search. A test checks that power and delete operations are refused.
 - **Certificate pinning.** Self-signed vCenter certificates are accepted only after you confirm their SHA-256 fingerprint. After that, any other certificate is refused.
 - **Credentials.** On the appliance, vCenter passwords are encrypted with XChaCha20-Poly1305. The key is derived from the administrator password with Argon2id, and it exists only in memory after an administrator logs in. In the Docker install, passwords are never written to disk. Collection pauses after three failed vCenter logins, so a changed password can't lock the account.
 - **SSH console.** Only the `admin` user can log in, only with the administrator password. A terminal is required, and commands, sftp, agent and port forwarding are refused. Only modern key exchanges and ciphers are offered. An address is locked out after five failed attempts in 15 minutes.
@@ -129,6 +133,8 @@ Every five minutes rightsizer collects the 20-second real-time samples of each p
 - **vCPU** = ceil(vCPU × CPU percentile ÷ target), minimum 1.
 - **Memory** = active-memory percentile × headroom, rounded up to 1 GB. It never goes below the memory floor (as a share of current memory), 1 GB for Linux or 2 GB for Windows.
 - **Clusters:** CPU is sized from the demand percentile ÷ host CPU target, and memory from the recommended VM memory plus 5% ÷ host memory target. One HA host is added.
+- **Diversity factor:** the sum of each VM's percentile of 30-minute CPU demand ÷ the same percentile of their combined demand. VMs on the same host whose demand correlates at 0.8 or more are reported as co-peaking.
+- **History preview:** each stored interval is read only for the period it alone covers (finest first), and every sample is weighted by the time it represents.
 
 Active memory can understate what databases and JVMs reserve. Check memory reductions against in-guest metrics before applying them.
 

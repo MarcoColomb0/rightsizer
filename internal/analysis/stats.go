@@ -18,14 +18,18 @@ type Hist struct {
 	Sum float64
 }
 
-func (h *Hist) Add(v float64) {
-	if v < 0 || math.IsNaN(v) {
+func (h *Hist) Add(v float64) { h.AddN(v, 1) }
+
+// AddN records v with a weight of n 20-second samples, so that coarser
+// historical samples count for the time they cover.
+func (h *Hist) AddN(v float64, n uint64) {
+	if v < 0 || math.IsNaN(v) || n == 0 {
 		return
 	}
 	v = min(v, 100)
-	h.B[int(v*2)]++
-	h.N++
-	h.Sum += v
+	h.B[int(v*2)] += uint32(n)
+	h.N += n
+	h.Sum += v * float64(n)
 	h.Max = max(h.Max, v)
 }
 
@@ -57,12 +61,14 @@ type Stat struct {
 	Max float64
 }
 
-func (s *Stat) Add(v float64) {
-	if v < 0 || math.IsNaN(v) {
+func (s *Stat) Add(v float64) { s.AddN(v, 1) }
+
+func (s *Stat) AddN(v float64, n uint64) {
+	if v < 0 || math.IsNaN(v) || n == 0 {
 		return
 	}
-	s.N++
-	s.Sum += v
+	s.N += n
+	s.Sum += v * float64(n)
 	s.Max = max(s.Max, v)
 }
 
@@ -77,6 +83,7 @@ type VMStats struct {
 	CPU      Hist
 	Mem      Hist
 	Ready    Stat
+	CoStop   Stat
 	CPUMHz   Stat
 	Consumed Stat
 	Disk     Stat
@@ -84,7 +91,15 @@ type VMStats struct {
 	First    time.Time
 	Last     time.Time
 	Samples  uint64
+	// Demand holds average CPU MHz per 30-minute slot since Store.Anchor.
+	Demand []float32
+	Slots  []uint16
 }
+
+const (
+	SlotLength = 30 * time.Minute
+	maxSlots   = 16 * 48
+)
 
 func (s *VMStats) Hours() float64 {
 	return float64(s.Samples) * 20 / 3600
@@ -117,10 +132,22 @@ type Store struct {
 	Clusters map[string]*ClusterStats
 	HostLast map[string]time.Time
 	Polls    uint64
+	Anchor   time.Time
 }
 
-func NewStore() *Store {
-	return &Store{VMs: map[string]*VMStats{}, Clusters: map[string]*ClusterStats{}, HostLast: map[string]time.Time{}}
+// NewStore keeps demand slots from anchor onwards.
+func NewStore(anchor time.Time) *Store {
+	return &Store{
+		VMs: map[string]*VMStats{}, Clusters: map[string]*ClusterStats{}, HostLast: map[string]time.Time{},
+		Anchor: anchor.Truncate(SlotLength),
+	}
+}
+
+func weight(interval int32) uint64 {
+	if interval <= 20 {
+		return 1
+	}
+	return uint64(interval / 20)
 }
 
 // Newest is the latest sample timestamp seen, in vCenter's clock.
@@ -140,6 +167,8 @@ func (st *Store) AddVM(s vc.Series, vcpu int) {
 		vs = &VMStats{}
 		st.VMs[s.Ref] = vs
 	}
+	w := weight(s.Interval)
+	secs := float64(max(s.Interval, 20))
 	for i, ts := range s.TS {
 		if !ts.After(vs.Last) {
 			continue
@@ -150,20 +179,58 @@ func (st *Store) AddVM(s vc.Series, vcpu int) {
 			}
 			return -1
 		}
-		vs.CPU.Add(at(vc.CPUUsage))
-		vs.Mem.Add(at(vc.MemUsage))
+		vs.CPU.AddN(at(vc.CPUUsage), w)
+		vs.Mem.AddN(at(vc.MemUsage), w)
+		// ready and co-stop are milliseconds summed over the sample interval
 		if r := at(vc.CPUReady); r >= 0 && vcpu > 0 {
-			vs.Ready.Add(r / (20000 * float64(vcpu)) * 100)
+			vs.Ready.AddN(r/(secs*1000*float64(vcpu))*100, w)
 		}
-		vs.CPUMHz.Add(at(vc.CPUMHz))
-		vs.Consumed.Add(at(vc.MemConsume))
-		vs.Disk.Add(at(vc.DiskUsage))
-		vs.Net.Add(at(vc.NetUsage))
+		if r := at(vc.CPUCoStop); r >= 0 && vcpu > 0 {
+			vs.CoStop.AddN(r/(secs*1000*float64(vcpu))*100, w)
+		}
+		mhz := at(vc.CPUMHz)
+		vs.CPUMHz.AddN(mhz, w)
+		vs.Consumed.AddN(at(vc.MemConsume), w)
+		vs.Disk.AddN(at(vc.DiskUsage), w)
+		vs.Net.AddN(at(vc.NetUsage), w)
+		st.addDemand(vs, ts, mhz, s.Interval)
 		if vs.First.IsZero() {
-			vs.First = ts
+			vs.First = ts.Add(-time.Duration(secs) * time.Second)
 		}
 		vs.Last = ts
-		vs.Samples++
+		vs.Samples += w
+	}
+}
+
+// addDemand records a sample in the 30-minute slots it covers: short samples
+// in the slot of their midpoint, long historical ones in every slot.
+func (st *Store) addDemand(vs *VMStats, ts time.Time, mhz float64, interval int32) {
+	if mhz < 0 || st.Anchor.IsZero() {
+		return
+	}
+	span := time.Duration(max(interval, 20)) * time.Second
+	if span <= SlotLength {
+		st.setSlot(vs, ts.Add(-span/2), mhz)
+		return
+	}
+	for t := ts.Add(-span).Truncate(SlotLength); t.Before(ts); t = t.Add(SlotLength) {
+		st.setSlot(vs, t, mhz)
+	}
+}
+
+func (st *Store) setSlot(vs *VMStats, t time.Time, mhz float64) {
+	i := int(t.Sub(st.Anchor) / SlotLength)
+	if t.Before(st.Anchor) || i >= maxSlots {
+		return
+	}
+	for len(vs.Demand) <= i {
+		vs.Demand = append(vs.Demand, 0)
+		vs.Slots = append(vs.Slots, 0)
+	}
+	n := float64(vs.Slots[i])
+	vs.Demand[i] = float32((float64(vs.Demand[i])*n + mhz) / (n + 1))
+	if vs.Slots[i] < math.MaxUint16 {
+		vs.Slots[i]++
 	}
 }
 
@@ -175,6 +242,10 @@ type clusterCap struct {
 // AddHosts folds per-host samples into per-cluster demand, summing hosts that
 // share a sample timestamp.
 func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, capacity map[string]clusterCap) {
+	var w uint64 = 1
+	if len(series) > 0 {
+		w = weight(series[0].Interval)
+	}
 	type key struct {
 		cl string
 		t  time.Time
@@ -210,13 +281,13 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 		}
 		c := capacity[k.cl]
 		if c.MHz > 0 {
-			cs.CPU.Add(b.cpu / c.MHz * 100)
+			cs.CPU.AddN(b.cpu/c.MHz*100, w)
 		}
 		if c.MemB > 0 {
-			cs.Mem.Add(b.mem / c.MemB * 100)
+			cs.Mem.AddN(b.mem/c.MemB*100, w)
 		}
-		cs.CPUMHz.Add(b.cpu)
-		cs.MemB.Add(b.mem)
+		cs.CPUMHz.AddN(b.cpu, w)
+		cs.MemB.AddN(b.mem, w)
 		if cs.acc == nil {
 			cs.acc = map[time.Time]*bucket{}
 		}
@@ -234,6 +305,9 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 		cs.flush(time.Now().Add(-2 * pointEvery))
 	}
 }
+
+// Flush moves every pending demand bucket into Points.
+func (cs *ClusterStats) Flush() { cs.flush(time.Now().Add(time.Hour)) }
 
 func (cs *ClusterStats) flush(before time.Time) {
 	for t, a := range cs.acc {

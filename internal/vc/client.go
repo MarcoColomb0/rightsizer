@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vmware/govmomi/property"
 	"github.com/vmware/govmomi/session"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/methods"
 	"github.com/vmware/govmomi/vim25/soap"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 type Credentials struct {
@@ -100,4 +102,8 @@ func (c *Client) Now(ctx context.Context) (time.Time, error) {
 
 func IsAuthError(err error) bool {
 	return err != nil && (strings.Contains(err.Error(), "login failed") || strings.Contains(err.Error(), "InvalidLogin"))
+}
+
+func (c *Client) retrieveOne(ctx context.Context, ref types.ManagedObjectReference, props []string, dst any) error {
+	return property.DefaultCollector(c.vim).RetrieveOne(ctx, ref, props, dst)
 }

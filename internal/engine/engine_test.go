@@ -15,10 +15,16 @@ import (
 
 	"github.com/vmware/govmomi/simulator"
 
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 	"github.com/MarcoColomb0/rightsizer/internal/vault"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
+
+func TestMain(m *testing.M) {
+	pollEvery = 100 * time.Millisecond
+	os.Exit(m.Run())
+}
 
 type sim struct {
 	host, user, pass, fp string
@@ -62,7 +68,6 @@ func waitPolls(t *testing.T, e *Engine, id string, n uint64) {
 }
 
 func TestMultiSourceWithVault(t *testing.T) {
-	pollEvery = 100 * time.Millisecond
 	a, b := newSim(t), newSim(t)
 	defer a.close()
 	defer b.close()
@@ -95,6 +100,42 @@ func TestMultiSourceWithVault(t *testing.T) {
 	}
 	waitPolls(t, e, ida, 2)
 	waitPolls(t, e, idb, 2)
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		st, _ := e.Source(ida)
+		if strings.HasPrefix(st.History, "imported") && st.Result != nil && st.Result.Preview {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("history not imported: %q preview=%v", st.History, st.Result != nil && st.Result.Preview)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	e.mu.Lock()
+	src := e.sources[ida]
+	e.mu.Unlock()
+	var hist *analysis.Store
+	for {
+		src.mu.Lock()
+		scanned := src.st.WasteScanned
+		hist = src.st.History
+		src.mu.Unlock()
+		if !scanned.IsZero() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("datastore scan did not run")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if hist == nil || len(hist.VMs) == 0 {
+		t.Fatal("history store empty")
+	}
+	for _, v := range hist.VMs {
+		if h := v.Hours(); h < 13.9*24 || h > 14*24+0.01 {
+			t.Fatalf("history must cover about 14 days per VM, got %.1f h", h)
+		}
+	}
 	if n := len(e.Summary().Sources); n != 2 {
 		t.Fatalf("want 2 sources, got %d", n)
 	}
@@ -152,7 +193,7 @@ func TestMultiSourceWithVault(t *testing.T) {
 	if err := e2.Unlock(admin); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline = time.Now().Add(10 * time.Second)
 	for {
 		if st, _ := e2.Source(ida); st.Phase == Running {
 			break
@@ -178,7 +219,6 @@ func TestMultiSourceWithVault(t *testing.T) {
 }
 
 func TestMemoryOnlyWithoutVault(t *testing.T) {
-	pollEvery = 100 * time.Millisecond
 	a := newSim(t)
 	defer a.close()
 	dir := t.TempDir()

@@ -20,6 +20,7 @@ type Host struct {
 	Threads     int
 	MHz         int
 	MemBytes    int64
+	NUMANodes   int
 	Connected   bool
 	Maintenance bool
 }
@@ -51,6 +52,7 @@ type VM struct {
 	PowerOn       bool
 	Template      bool
 	VCPU          int
+	CoresPerSock  int
 	MemMB         int
 	Committed     int64
 	Uncommitted   int64
@@ -59,23 +61,35 @@ type VM struct {
 	Snapshots     []Snapshot
 	SnapshotBytes int64
 	ToolsOK       bool
+	Files         []string
+}
+
+type Datastore struct {
+	Ref        string
+	Name       string
+	Type       string
+	Capacity   int64
+	Free       int64
+	Accessible bool
+	Browser    string
 }
 
 type Inventory struct {
-	Taken time.Time
-	Hosts []Host
-	VMs   []VM
+	Taken      time.Time
+	Hosts      []Host
+	VMs        []VM
+	Datastores []Datastore
 }
 
 var vmProps = []string{
 	"name", "config.template", "config.guestFullName", "config.hardware.numCPU",
-	"config.hardware.memoryMB", "config.hardware.device", "runtime.powerState",
+	"config.hardware.numCoresPerSocket", "config.hardware.memoryMB", "config.hardware.device", "runtime.powerState",
 	"runtime.host", "summary.storage", "guest.disk", "guest.toolsRunningStatus",
 	"snapshot", "layoutEx",
 }
 
 var hostProps = []string{
-	"name", "parent", "summary.hardware", "runtime.connectionState", "runtime.inMaintenanceMode",
+	"name", "parent", "summary.hardware", "hardware.numaInfo.numNodes", "runtime.connectionState", "runtime.inMaintenanceMode",
 }
 
 func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
@@ -128,6 +142,12 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 			host.MHz = int(hw.CpuMhz)
 			host.MemBytes = hw.MemorySize
 		}
+		if h.Hardware != nil && h.Hardware.NumaInfo != nil {
+			host.NUMANodes = int(h.Hardware.NumaInfo.NumNodes)
+		}
+		if host.NUMANodes <= 0 {
+			host.NUMANodes = max(host.Sockets, 1)
+		}
 		hostCluster[host.Ref] = cl
 		hostName[host.Ref] = host.Name
 		inv.Hosts = append(inv.Hosts, host)
@@ -139,6 +159,18 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 	}
 	for i := range vms {
 		inv.VMs = append(inv.VMs, convertVM(&vms[i], hostCluster, hostName))
+	}
+
+	var dss []mo.Datastore
+	if err := v.Retrieve(ctx, []string{"Datastore"}, []string{"name", "summary", "browser"}, &dss); err != nil {
+		return nil, err
+	}
+	for _, d := range dss {
+		ds := Datastore{Ref: d.Self.Value, Name: d.Summary.Name, Type: d.Summary.Type, Capacity: d.Summary.Capacity, Free: d.Summary.FreeSpace, Accessible: d.Summary.Accessible, Browser: d.Browser.Value}
+		if ds.Name == "" {
+			ds.Name = d.Name
+		}
+		inv.Datastores = append(inv.Datastores, ds)
 	}
 	return inv, nil
 }
@@ -158,6 +190,10 @@ func convertVM(m *mo.VirtualMachine, hostCluster, hostName map[string]string) VM
 		vm.Template = m.Config.Template
 		vm.GuestOS = m.Config.GuestFullName
 		vm.VCPU = int(m.Config.Hardware.NumCPU)
+		vm.CoresPerSock = 1
+		if c := m.Config.Hardware.NumCoresPerSocket; c != nil && *c > 0 {
+			vm.CoresPerSock = int(*c)
+		}
 		vm.MemMB = int(m.Config.Hardware.MemoryMB)
 		for _, d := range m.Config.Hardware.Device {
 			disk, ok := d.(*types.VirtualDisk)
@@ -196,8 +232,15 @@ func convertVM(m *mo.VirtualMachine, hostCluster, hostName map[string]string) VM
 		}
 		walk(m.Snapshot.RootSnapshotList)
 	}
-	if m.LayoutEx != nil && len(vm.Snapshots) > 0 {
-		vm.SnapshotBytes = snapshotBytes(m.LayoutEx)
+	if m.LayoutEx != nil {
+		if len(vm.Snapshots) > 0 {
+			vm.SnapshotBytes = snapshotBytes(m.LayoutEx)
+		}
+		for _, f := range m.LayoutEx.File {
+			if strings.HasSuffix(f.Name, ".vmdk") {
+				vm.Files = append(vm.Files, f.Name)
+			}
+		}
 	}
 	return vm
 }
