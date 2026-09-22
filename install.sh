@@ -55,7 +55,9 @@ command -v docker >/dev/null 2>&1 || die "Docker is required. Install it first: 
 docker info >/dev/null 2>&1 || die "Docker is installed but the daemon is not running (try: systemctl start docker)."
 command -v curl >/dev/null 2>&1 || die "curl is required."
 
-[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || die "invalid port: $PORT"
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+	die "invalid port: $PORT"
+fi
 if [ -z "$HOST" ]; then
 	HOST="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
 	[ -n "$HOST" ] || HOST="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -168,7 +170,9 @@ newer() {
 
 LATEST="" LATEST_URL=""
 latest_release() {
-	[ "${UPDATE_CHECK:-true}" = "true" ] && [ -z "${RIGHTSIZER_NO_UPDATE_CHECK:-}" ] || return 0
+	if [ "${UPDATE_CHECK:-true}" != "true" ] || [ -n "${RIGHTSIZER_NO_UPDATE_CHECK:-}" ]; then
+		return 0
+	fi
 	command -v curl >/dev/null 2>&1 || return 0
 	local dir="${XDG_CACHE_HOME:-$HOME/.cache}/rightsizer" cache body
 	cache="$dir/latest"
@@ -180,7 +184,7 @@ latest_release() {
 		LATEST="$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' <<<"$body" | head -n1)"
 		LATEST_URL="https://github.com/${REPO}/releases/tag/${LATEST}"
 		if [[ "$LATEST" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-			mkdir -p "$dir" 2>/dev/null && printf '%s %s\n' "$LATEST" "$LATEST_URL" >"$cache" 2>/dev/null || true
+			{ mkdir -p "$dir" && printf '%s %s\n' "$LATEST" "$LATEST_URL" >"$cache"; } 2>/dev/null || true
 		fi
 	fi
 	[[ "$LATEST" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { LATEST="" LATEST_URL=""; }
