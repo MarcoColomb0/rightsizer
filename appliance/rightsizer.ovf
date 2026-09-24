@@ -72,7 +72,7 @@
       <Property ovf:key="guestinfo.ignition.config.data" ovf:type="string" ovf:userConfigurable="false" ovf:value="{ignition}"/>
       <Property ovf:key="guestinfo.ignition.config.data.encoding" ovf:type="string" ovf:userConfigurable="false" ovf:value="base64"/>
     </ProductSection>
-    <OperatingSystemSection ovf:id="100" vmw:osType="other5xLinux64Guest">
+    <OperatingSystemSection ovf:id="100" vmw:osType="other4xLinux64Guest">
       <Info>Guest operating system</Info>
       <Description>Flatcar Container Linux {flatcar_version}</Description>
     </OperatingSystemSection>

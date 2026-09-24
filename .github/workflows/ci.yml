@@ -98,18 +98,21 @@ jobs:
       - name: Install appliance tooling
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-utils sshpass gnupg e2fsprogs >/dev/null
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils sshpass gnupg e2fsprogs tesseract-ocr imagemagick >/dev/null
           sudo curl -fsSL -o /usr/local/bin/butane https://github.com/coreos/butane/releases/download/v0.29.0/butane-x86_64-unknown-linux-gnu
           echo "53a20d820fbaa7fda4f1afd1814974badc8e448db4c151d3f1ba005dc29bc4c9  /usr/local/bin/butane" | sha256sum -c -
           sudo chmod 0755 /usr/local/bin/butane
       - run: shellcheck appliance/build.sh appliance/smoke-test.sh appliance/files/rightsizer-host
       - run: docker build --build-arg VERSION=v0.0.0 -t ghcr.io/marcocolomb0/rightsizer:0.0.0 .
       - run: WORK="$RUNNER_TEMP/smoke" appliance/smoke-test.sh ghcr.io/marcocolomb0/rightsizer:0.0.0
-      - if: failure()
+      - if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: appliance-serial-log
-          path: ${{ runner.temp }}/smoke/serial.log
+          name: appliance-console
+          path: |
+            ${{ runner.temp }}/smoke/serial.log
+            ${{ runner.temp }}/smoke/screen.png
+          if-no-files-found: ignore
 
   ova:
     needs: [image, appliance-test]
@@ -130,7 +133,7 @@ jobs:
       - name: Install appliance tooling
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-system-x86 qemu-utils sshpass gnupg e2fsprogs >/dev/null
+          sudo apt-get install -y -qq qemu-system-x86 qemu-utils sshpass gnupg e2fsprogs tesseract-ocr imagemagick >/dev/null
           sudo curl -fsSL -o /usr/local/bin/butane https://github.com/coreos/butane/releases/download/v0.29.0/butane-x86_64-unknown-linux-gnu
           echo "53a20d820fbaa7fda4f1afd1814974badc8e448db4c151d3f1ba005dc29bc4c9  /usr/local/bin/butane" | sha256sum -c -
           sudo chmod 0755 /usr/local/bin/butane

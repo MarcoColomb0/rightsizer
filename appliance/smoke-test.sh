@@ -48,6 +48,7 @@ butane --strict -d "$WORK/ign" "$HERE/smoke.bu" >"$WORK/smoke.ign"
 qemu-img create -q -f qcow2 -F qcow2 -b "$WORK/flatcar.img" "$WORK/disk.qcow2"
 qemu-system-x86_64 -name rightsizer-ci -m 2048 -smp 2 -machine accel=kvm:tcg -cpu max \
 	-display none -serial "file:$WORK/serial.log" -daemonize -pidfile "$WORK/qemu.pid" \
+	-monitor "unix:$WORK/monitor.sock,server=on,wait=off" \
 	-drive if=virtio,file="$WORK/disk.qcow2" \
 	-drive if=virtio,format=raw,file="$WORK/bundle.raw",readonly=on \
 	-fw_cfg name=opt/org.flatcar-linux/config,file="$WORK/smoke.ign" \
@@ -124,4 +125,41 @@ if tr -d '\r' <"$WORK/serial.log" | grep -qE 'login: *$'; then
 	fail "the serial console must not offer a login prompt"
 fi
 echo "✓ no login prompt on the serial console"
+
+# The VM console (what vCenter's web console shows) must display the status
+# screen, not boot logs or a login prompt.
+screen() {
+	python3 - "$WORK/monitor.sock" "$WORK/screen.ppm" <<'PY'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+s.settimeout(5)
+time.sleep(0.5)
+try:
+    s.recv(65536)
+except OSError:
+    pass
+s.sendall(("screendump %s\n" % sys.argv[2]).encode())
+time.sleep(2)
+PY
+	convert "$WORK/screen.ppm" -scale 200% "$WORK/screen.png"
+	tesseract "$WORK/screen.png" - 2>/dev/null
+}
+text=""
+for _ in $(seq 1 24); do
+	text="$(screen || true)"
+	if grep -qi "rightsizer appliance" <<<"$text" && grep -qi "ssh admin@" <<<"$text"; then
+		break
+	fi
+	sleep 5
+done
+if ! grep -qi "rightsizer appliance" <<<"$text" || ! grep -qi "ssh admin@" <<<"$text"; then
+	fail "the VM console does not show the status screen. OCR read:
+$text"
+fi
+if grep -qiE "login:|audit|systemd\[" <<<"$text"; then
+	fail "the VM console shows a login prompt or log lines. OCR read:
+$text"
+fi
+echo "✓ VM console shows the status screen with the SSH address"
 echo "✓ appliance smoke test passed"

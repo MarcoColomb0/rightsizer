@@ -2,8 +2,26 @@ variant: flatcar
 version: 1.1.0
 
 kernel_arguments:
+  should_exist:
+    - quiet
   should_not_exist:
     - flatcar.autologin
+
+passwd:
+  groups:
+    - name: rightsizer
+      gid: 65532
+      system: true
+  users:
+    # Owns the engine data (the container runs as 65532) and runs the VM
+    # console screen. No password, no shell, no home: nobody can log in.
+    - name: rightsizer
+      uid: 65532
+      primary_group: rightsizer
+      no_user_group: true
+      no_create_home: true
+      shell: /sbin/nologin
+      system: true
 
 storage:
   directories:
@@ -33,6 +51,7 @@ storage:
       contents:
         inline: |
           kernel.sysrq=0
+          kernel.printk=3 4 1 3
           kernel.kptr_restrict=2
           kernel.dmesg_restrict=1
           kernel.unprivileged_bpf_disabled=1
@@ -129,8 +148,8 @@ systemd:
         [Service]
         ExecStart=/opt/rightsizer/bin/rightsizer console
         Environment=RIGHTSIZER_DATA=/var/lib/rightsizer/data TERM=linux
-        User=65532
-        Group=65532
+        User=rightsizer
+        Group=rightsizer
         SupplementaryGroups=tty
         StandardInput=null
         StandardOutput=tty
