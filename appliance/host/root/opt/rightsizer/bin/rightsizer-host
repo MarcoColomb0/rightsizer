@@ -217,6 +217,7 @@ grub_cfg() {
 kernel_args() {
 	local cfg tmp a e want=() missing=()
 	cfg="$(grub_cfg)" || { log "OEM grub.cfg not found; kernel settings not changed"; return 1; }
+	log "kernel settings: checking $cfg for: $*"
 	tmp="$(mktemp)"
 	cp "$cfg" "$tmp"
 	sed -i '/^# BEGIN rightsizer/,/^# END rightsizer/d' "$tmp"
@@ -243,6 +244,7 @@ kernel_args() {
 	fi
 	if cmp -s "$tmp" "$cfg"; then
 		rm -f "$tmp"
+		log "kernel settings already as required"
 		return 1
 	fi
 	cp "$tmp" "$cfg.rightsizer-new"

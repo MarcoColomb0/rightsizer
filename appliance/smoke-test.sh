@@ -205,8 +205,10 @@ login_ok() {
 	return 1
 }
 
+# OCR often reads the zeros in the version as the letter O.
+V001='v[0O]\.[0O]\.1'
 trigger 19901
-wait_screen "v0\.0\.1" || fail "the appliance did not upgrade to v0.0.1. OCR read:
+wait_screen "$V001" || fail "the appliance did not upgrade to v0.0.1. OCR read:
 $text"
 wait_screen "restart.*required|required.*kernel" || fail "the kernel change did not raise a restart flag. OCR read:
 $text"
@@ -216,7 +218,7 @@ echo "✓ administrator password and stored data survived the upgrade"
 
 trigger 19902
 sleep 20
-wait_screen "v0\.0\.1" "restart.*required" || fail "after the restart the flag must clear. OCR read:
+wait_screen "$V001" "restart.*required" || fail "after the restart the flag must clear. OCR read:
 $text"
 login_ok || fail "the administrator cannot log in after the restart"
 echo "✓ restart request rebooted the appliance and cleared the flag"
