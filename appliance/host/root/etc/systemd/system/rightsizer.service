@@ -1,0 +1,17 @@
+[Unit]
+Description=rightsizer engine
+After=docker.service network-online.target rightsizer-network.service
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/opt/rightsizer/bin/rightsizer-host prepare
+ExecStart=/opt/rightsizer/bin/rightsizer-host engine
+ExecStop=/usr/bin/docker stop -t 60 rightsizer
+TimeoutStartSec=15min
+TimeoutStopSec=90
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -19,6 +19,7 @@ LABEL org.opencontainers.image.title="rightsizer" \
       org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/rightsizer /rightsizer
+COPY appliance/host /appliance
 COPY --from=build --chown=65532:65532 --chmod=700 /out/data /data
 COPY --from=build --chown=65532:65532 --chmod=700 /out/backup /backup
 ENV RIGHTSIZER_DATA=/data PATH=/

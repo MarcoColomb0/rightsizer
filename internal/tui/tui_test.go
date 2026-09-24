@@ -23,6 +23,7 @@ type fake struct {
 	resumed  string
 	upgraded string
 	excl     []analysis.Exclusion
+	rebooted bool
 	lockedPw bool
 }
 
@@ -47,6 +48,7 @@ func (f *fake) Exclude(x analysis.Exclusion) error {
 	return nil
 }
 func (f *fake) Unexclude(id string) error { f.excl = nil; return nil }
+func (f *fake) RequestReboot() error      { f.rebooted = true; return nil }
 
 func (f *fake) ChangePassword(o, n string) error {
 	if o != "old password 123" {
@@ -273,4 +275,31 @@ func TestExcludeFromFinding(t *testing.T) {
 	if len(f.excl) != 0 {
 		t.Fatal("exclusion not removed")
 	}
+}
+
+func TestRestartRequired(t *testing.T) {
+	f := demo()
+	f.sum.Reboot = []string{"Appliance updated: kernel settings changed"}
+
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), keys1("R"))
+	view(t, m, "Restart required", "kernel settings changed")
+	if m.confirm != "" {
+		t.Fatal("the Docker install cannot restart the host")
+	}
+
+	m = New(f, Options{Version: "v1.0.0", Appliance: true})
+	m = send(t, m, m.fetch()())
+	view(t, m, "Restart required", "Press R to restart now", "R restart")
+	m = send(t, m, keys1("R"))
+	view(t, m, "Restart the appliance now?")
+	m = send(t, m, keys1("n"))
+	if f.rebooted {
+		t.Fatal("n must cancel")
+	}
+	m = send(t, m, keys1("R"), keys1("y"))
+	if !f.rebooted {
+		t.Fatal("y must request the restart")
+	}
+	view(t, m, "The appliance is restarting")
 }

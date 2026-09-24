@@ -116,6 +116,8 @@ type Summary struct {
 	Shares  []report.Share
 	Vault   VaultState
 	Upgrade *UpgradeInfo
+	// Reboot lists why the appliance needs a restart (appliance only).
+	Reboot []string
 }
 
 // Engine runs one analysis per vCenter source. With a vault, vCenter

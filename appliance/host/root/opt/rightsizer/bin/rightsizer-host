@@ -131,7 +131,9 @@ load_bundle() {
 	if [ -e /dev/disk/by-label/RSBUNDLE ]; then
 		mkdir -p "$mnt"
 		mount -o ro,nodev,nosuid,noexec /dev/disk/by-label/RSBUNDLE "$mnt"
-		docker load -i "$mnt/rightsizer-image.tar.gz" >/dev/null || true
+		for t in "$mnt"/rightsizer-image*.tar.gz; do
+			[ -f "$t" ] && { docker load -i "$t" >/dev/null || true; }
+		done
 		umount "$mnt"
 	fi
 	docker image inspect "$img" >/dev/null 2>&1 || docker pull -q "$img" >/dev/null
@@ -159,6 +161,213 @@ prepare() {
 	admin_password
 	load_bundle
 	install_console
+}
+
+UNIT='^[a-z0-9@.-]+\.(service|socket|path|timer|target)$'
+OWN_UNIT='^rightsizer[a-z0-9-]*\.(service|path|timer)$'
+KARG='^-?[A-Za-z0-9._=,-]+$'
+HOST_PATHS='^/(opt/rightsizer/bin/[a-z0-9-]+|etc/systemd/system/rightsizer[a-z0-9-]*\.(service|path|timer)|etc/sysctl\.d/90-rightsizer\.conf|etc/systemd/logind\.conf\.d/10-rightsizer\.conf|etc/docker/daemon\.json|etc/flatcar/update\.conf)$'
+PREVIOUS=$STATE/host-previous
+
+# replace installs a file atomically: a running copy of this script keeps
+# reading the old inode, so the helper can safely replace itself.
+replace() {
+	local src="$1" dst="$2" mode="$3"
+	install -d -m 0755 "$(dirname "$dst")"
+	cp "$src" "$dst.rightsizer-new"
+	chown root:root "$dst.rightsizer-new"
+	chmod "$mode" "$dst.rightsizer-new"
+	mv -f "$dst.rightsizer-new" "$dst"
+}
+
+ensure_user() {
+	getent group rightsizer >/dev/null || groupadd --system --gid "$UID_ENGINE" rightsizer
+	getent passwd rightsizer >/dev/null ||
+		useradd --system --uid "$UID_ENGINE" --gid rightsizer --no-create-home --home-dir / --shell /sbin/nologin rightsizer
+}
+
+reboot_flag() {
+	local dir="$DATA/host/reboot" f
+	install -d -m 0700 -o "$UID_ENGINE" -g "$UID_ENGINE" "$dir"
+	f="$dir/$1.json"
+	printf '{"Text":"%s","BootID":"%s","Since":"%s"}\n' "$2" "$(cat /proc/sys/kernel/random/boot_id)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$f.tmp"
+	chown "$UID_ENGINE:$UID_ENGINE" "$f.tmp"
+	chmod 0600 "$f.tmp"
+	mv "$f.tmp" "$f"
+}
+
+clear_flag() { rm -f "$DATA/host/reboot/$1.json"; }
+
+# grub_cfg prints Flatcar's OEM grub.cfg, mounting the OEM partition if the
+# running system does not have it mounted.
+grub_cfg() {
+	local f mnt=/run/rightsizer-oem
+	for f in /oem/grub.cfg /usr/share/oem/grub.cfg "$mnt/grub.cfg"; do
+		[ -f "$f" ] && { echo "$f"; return 0; }
+	done
+	[ -e /dev/disk/by-label/OEM ] || return 1
+	mkdir -p "$mnt"
+	mount /dev/disk/by-label/OEM "$mnt" 2>/dev/null || return 1
+	[ -f "$mnt/grub.cfg" ] || touch "$mnt/grub.cfg"
+	echo "$mnt/grub.cfg"
+}
+
+# kernel_args makes the kernel command line match the arguments given (-arg:
+# must be absent). It returns 0 when grub.cfg changed and a restart is needed.
+kernel_args() {
+	local cfg tmp a e want=() missing=()
+	cfg="$(grub_cfg)" || { log "OEM grub.cfg not found; kernel settings not changed"; return 1; }
+	tmp="$(mktemp)"
+	cp "$cfg" "$tmp"
+	sed -i '/^# BEGIN rightsizer/,/^# END rightsizer/d' "$tmp"
+	for a in "$@"; do
+		valid "$KARG" "$a" || continue
+		e="$(sed 's/[.]/\\./g' <<<"${a#-}")"
+		if [[ "$a" == -* ]]; then
+			sed -i -E "/linux_append/ s/(^|[\" ])${e}([\" ]|$)/\1\2/g" "$tmp"
+		else
+			want+=("$a")
+		fi
+	done
+	for a in "${want[@]}"; do
+		e="$(sed 's/[.]/\\./g' <<<"$a")"
+		grep 'linux_append' "$tmp" | grep -Eq "(^|[\" ])${e}([\" ]|$)" || missing+=("$a")
+	done
+	if [ "${#missing[@]}" -gt 0 ]; then
+		{
+			echo "# BEGIN rightsizer (managed by rightsizer-host, do not edit)"
+			echo "set linux_append=\"\$linux_append ${missing[*]}\""
+			echo "# END rightsizer"
+		} >>"$tmp"
+	fi
+	if cmp -s "$tmp" "$cfg"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	cp "$tmp" "$cfg.rightsizer-new"
+	chmod 0644 "$cfg.rightsizer-new"
+	mv -f "$cfg.rightsizer-new" "$cfg"
+	rm -f "$tmp"
+	log "kernel settings changed in $cfg"
+	return 0
+}
+
+# apply installs an appliance host bundle (see appliance/host/manifest) and
+# records everything it replaced in $2 so that restore_host can undo it.
+apply() {
+	local dir="$1" prev="$2" kind a b src reasons=() changed=() enable=() mask=() kargs=()
+	[ -f "$dir/manifest" ] || { log "bundle has no manifest"; return 1; }
+	rm -rf "$prev"
+	install -d -m 0700 "$prev"
+	: >"$prev/list"
+	while read -r kind a b; do
+		case "$kind" in
+		"" | \#*) continue ;;
+		file)
+			if ! valid "$HOST_PATHS" "$b" || ! valid '^0(644|755)$' "$a"; then
+				log "bundle entry not allowed: $a $b"
+				return 1
+			fi
+			src="$dir/root$b"
+			if [ ! -f "$src" ] || [ -L "$src" ]; then
+				log "bundle file missing: $b"
+				return 1
+			fi
+			if [ -f "$b" ] && cmp -s "$src" "$b"; then
+				continue
+			fi
+			if [ -e "$b" ]; then
+				install -d -m 0700 "$prev/files$(dirname "$b")"
+				cp -p "$b" "$prev/files$b"
+				echo "restore $b" >>"$prev/list"
+			else
+				echo "remove $b" >>"$prev/list"
+			fi
+			replace "$src" "$b" "$a"
+			changed+=("$b")
+			;;
+		enable)
+			valid "$OWN_UNIT" "$a" || { log "bundle unit not allowed: $a"; return 1; }
+			enable+=("$a")
+			;;
+		mask)
+			valid "$UNIT" "$a" || { log "bundle unit not allowed: $a"; return 1; }
+			mask+=("$a")
+			;;
+		kernel)
+			valid "$KARG" "$a" || { log "bundle kernel argument not allowed: $a"; return 1; }
+			kargs+=("$a")
+			;;
+		*)
+			log "unknown bundle entry: $kind"
+			return 1
+			;;
+		esac
+	done <"$dir/manifest"
+
+	ensure_user
+	systemctl daemon-reload
+	for a in "${mask[@]}"; do systemctl mask "$a" >/dev/null 2>&1 || true; done
+	for a in "${enable[@]}"; do
+		systemctl enable "$a" >/dev/null 2>&1 || true
+		case "$a" in *.path | *.timer) systemctl restart "$a" || true ;; esac
+	done
+	for a in "${changed[@]}"; do
+		case "$a" in
+		*/sysctl.d/*) sysctl --system >/dev/null || true ;;
+		*/flatcar/update.conf) systemctl try-restart update-engine.service locksmithd.service 2>/dev/null || true ;;
+		*/docker/daemon.json) reasons+=("Docker settings changed") ;;
+		*/logind.conf.d/*) reasons+=("console settings changed") ;;
+		esac
+	done
+	if kernel_args "${kargs[@]}"; then
+		reasons+=("kernel settings changed")
+	fi
+	if [ "${#reasons[@]}" -gt 0 ]; then
+		local IFS=", "
+		reboot_flag upgrade "Appliance updated: ${reasons[*]}"
+	fi
+	log "appliance host layer applied (${#changed[@]} files changed)"
+}
+
+restore_host() {
+	local prev="$1" action path
+	[ -f "$prev/list" ] || return 0
+	while read -r action path; do
+		case "$action" in
+		restore) [ -f "$prev/files$path" ] && mv -f "$prev/files$path" "$path" ;;
+		remove) rm -f "$path" ;;
+		esac
+	done <"$prev/list"
+	systemctl daemon-reload
+	log "appliance host layer restored"
+}
+
+os_check() {
+	local st op ver
+	st="$(update_engine_client -status 2>/dev/null || true)"
+	op="$(sed -n 's/^CURRENT_OP=//p' <<<"$st")"
+	ver="$(sed -n 's/^NEW_VERSION=//p' <<<"$st")"
+	valid '^[0-9][0-9.]*$' "$ver" || ver=""
+	if [ "$op" = "UPDATE_STATUS_UPDATED_NEED_REBOOT" ]; then
+		reboot_flag os "Flatcar OS update ${ver:-} installed"
+	else
+		clear_flag os
+	fi
+}
+
+reboot_host() {
+	local req="$DATA/host/reboot-request"
+	[ -f "$req" ] || return 0
+	if [ "$(head -c 16 "$req" | tr -d '\n')" != "reboot" ]; then
+		rm -f "$req"
+		log "ignoring invalid restart request"
+		return 0
+	fi
+	rm -f "$req"
+	log "restart requested from the console"
+	systemctl stop rightsizer.service || true
+	systemctl reboot
 }
 
 public_ip() {
@@ -208,7 +417,7 @@ ready() {
 }
 
 upgrade() {
-	local req="$DATA/host/upgrade-request" tag old new before after file
+	local req="$DATA/host/upgrade-request" tag old new before after file bundle tmp
 	[ -f "$req" ] || return 0
 	tag="$(head -c 32 "$req" | tr -d '\n')"
 	rm -f "$req"
@@ -222,10 +431,14 @@ upgrade() {
 	log "upgrading $old -> $new"
 
 	status "$tag" "downloading"
-	if ! docker pull -q "$new" >/dev/null; then
+	if ! docker image inspect "$new" >/dev/null 2>&1 && ! docker pull -q "$new" >/dev/null; then
 		status "$tag" "failed" "download failed, nothing changed"
 		return 0
 	fi
+	bundle="$(mktemp -d)"
+	tmp="$(docker create "$new" version)"
+	docker cp "$tmp:/appliance" "$bundle/" >/dev/null 2>&1 || true
+	docker rm "$tmp" >/dev/null
 	before="$(count || true)"
 
 	status "$tag" "backing up"
@@ -239,6 +452,19 @@ upgrade() {
 		return 0
 	fi
 
+	rm -rf "$PREVIOUS"
+	if [ -f "$bundle/appliance/manifest" ]; then
+		status "$tag" "updating the appliance"
+		if ! bash "$bundle/appliance/root/opt/rightsizer/bin/rightsizer-host" apply "$bundle/appliance" "$PREVIOUS"; then
+			restore_host "$PREVIOUS"
+			rm -rf "$bundle"
+			systemctl start rightsizer.service
+			status "$tag" "failed" "the appliance update was refused, nothing changed"
+			return 0
+		fi
+	fi
+	rm -rf "$bundle"
+
 	status "$tag" "starting"
 	printf 'IMAGE=%s\n' "$new" >"$ENV_FILE.new"
 	chmod 0644 "$ENV_FILE.new"
@@ -250,6 +476,7 @@ upgrade() {
 	fi
 	if [ -n "$after" ] && { [ -z "$before" ] || [ "$after" -ge "$before" ]; }; then
 		status "$tag" "done"
+		rm -rf "$PREVIOUS"
 		systemctl restart rightsizer-console.service || true
 		docker image rm "$old" >/dev/null 2>&1 || true
 		log "upgrade to $tag complete"
@@ -264,9 +491,12 @@ upgrade() {
 		docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
 			--user "$UID_ENGINE:$UID_ENGINE" --entrypoint /rightsizer \
 			-v "$DATA":/data -v "$BACKUPS":/backup:ro "$new" restore "/backup/$file" || true
+	restore_host "$PREVIOUS"
+	clear_flag upgrade
 	printf 'IMAGE=%s\n' "$old" >"$ENV_FILE"
 	chmod 0644 "$ENV_FILE"
 	systemctl start rightsizer.service
+	systemctl restart rightsizer-console.service || true
 	status "$tag" "rolled back" "the new version did not start or load all analyses"
 }
 
@@ -275,8 +505,11 @@ network) network ;;
 prepare) prepare ;;
 engine) engine ;;
 upgrade) upgrade ;;
+apply) apply "${2:?bundle directory}" "${3:?backup directory}" ;;
+os-check) os_check ;;
+reboot) reboot_host ;;
 *)
-	echo "usage: rightsizer-host network|prepare|engine|upgrade" >&2
+	echo "usage: rightsizer-host network|prepare|engine|upgrade|apply|os-check|reboot" >&2
 	exit 2
 	;;
 esac

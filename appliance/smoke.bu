@@ -13,6 +13,41 @@ systemd:
             [Service]
             StandardOutput=journal+console
             StandardError=journal+console
+    - name: rightsizer-upgrade.service
+      dropins:
+        - name: 90-ci-console.conf
+          contents: |
+            [Service]
+            StandardOutput=journal+console
+            StandardError=journal+console
+    # Test-only triggers: a TCP connection writes the same request files the
+    # console writes, so CI can drive an upgrade and a restart from outside.
+    - name: rightsizer-ci-upgrade.socket
+      enabled: true
+      contents: |
+        [Socket]
+        ListenStream=9901
+        Accept=yes
+        [Install]
+        WantedBy=sockets.target
+    - name: rightsizer-ci-upgrade@.service
+      contents: |
+        [Service]
+        StandardInput=socket
+        ExecStart=/bin/sh -c 'printf "v0.0.1\\n" >/var/lib/rightsizer/data/host/upgrade-request'
+    - name: rightsizer-ci-reboot.socket
+      enabled: true
+      contents: |
+        [Socket]
+        ListenStream=9902
+        Accept=yes
+        [Install]
+        WantedBy=sockets.target
+    - name: rightsizer-ci-reboot@.service
+      contents: |
+        [Service]
+        StandardInput=socket
+        ExecStart=/bin/sh -c 'printf "reboot\\n" >/var/lib/rightsizer/data/host/reboot-request'
 storage:
   files:
     - path: /etc/rightsizer/ovfenv.xml

@@ -90,6 +90,16 @@ func Render(version, dataDir string, src Source) string {
 		if len(s.Shares) > 0 {
 			line("Reports", fmt.Sprintf("%d shared", len(s.Shares)))
 		}
+		for i, r := range s.Reboot {
+			label := ""
+			if i == 0 {
+				label = "Restart"
+			}
+			line(label, warn.Render("required: "+r))
+		}
+		if len(s.Reboot) > 0 {
+			line("", muted.Render("Restart from the SSH console (R), or restart the VM in vCenter."))
+		}
 	}
 	b.WriteString("\n  " + muted.Render("Network settings and the administrator password are managed in vCenter:") + "\n")
 	b.WriteString("  " + muted.Render("select the VM > Configure > vApp Options, then restart the VM.") + "\n")

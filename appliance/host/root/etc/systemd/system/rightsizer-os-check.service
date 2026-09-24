@@ -1,0 +1,6 @@
+[Unit]
+Description=Check whether a downloaded OS update needs a restart
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rightsizer/bin/rightsizer-host os-check

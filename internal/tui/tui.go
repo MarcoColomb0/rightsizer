@@ -331,6 +331,8 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 	case "unexclude":
 		m.scr, m.note = scrExclusions, "Exclusion removed."
 		return m, tea.Batch(m.fetch(), m.fetchExclusions())
+	case "reboot":
+		m.scr, m.note = scrHome, "The appliance is restarting. This session will close; reconnect in a few minutes and log in so collection resumes."
 	case "upgrade":
 		m.opt.CanUpgrade = false
 		m.scr, m.note = scrHome, "Upgrade to "+m.opt.Latest+" started. This session will close while the engine restarts; reconnect in about a minute. Collected data is backed up first."
@@ -347,8 +349,20 @@ func (m Model) selected() *engine.Status {
 	return &m.sum.Sources[m.sel]
 }
 
+func (m Model) canReboot() bool {
+	return m.opt.Appliance && m.sum != nil && len(m.sum.Reboot) > 0
+}
+
 func (m Model) keyHome(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.note = ""
+	if m.confirm == "reboot" {
+		m.confirm = ""
+		if k.String() == "y" || k.String() == "Y" {
+			b := m.b
+			return m.busyCmd("Requesting the restart…", "reboot", "", func() error { return b.RequestReboot() })
+		}
+		return m, nil
+	}
 	n := 0
 	if m.sum != nil {
 		n = len(m.sum.Sources)
@@ -399,6 +413,10 @@ func (m Model) keyHome(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		if m.updateAvailable() {
 			m.scr = scrUpdate
+		}
+	case "R":
+		if m.canReboot() {
+			m.confirm = "reboot"
 		}
 	}
 	return m, nil

@@ -1,0 +1,7 @@
+[Unit]
+Description=Upgrade the rightsizer engine and appliance
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rightsizer/bin/rightsizer-host upgrade
+TimeoutStartSec=30min

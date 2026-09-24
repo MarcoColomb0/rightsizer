@@ -102,9 +102,18 @@ jobs:
           sudo curl -fsSL -o /usr/local/bin/butane https://github.com/coreos/butane/releases/download/v0.29.0/butane-x86_64-unknown-linux-gnu
           echo "53a20d820fbaa7fda4f1afd1814974badc8e448db4c151d3f1ba005dc29bc4c9  /usr/local/bin/butane" | sha256sum -c -
           sudo chmod 0755 /usr/local/bin/butane
-      - run: shellcheck appliance/build.sh appliance/smoke-test.sh appliance/files/rightsizer-host
-      - run: docker build --build-arg VERSION=v0.0.0 -t ghcr.io/marcocolomb0/rightsizer:0.0.0 .
-      - run: WORK="$RUNNER_TEMP/smoke" appliance/smoke-test.sh ghcr.io/marcocolomb0/rightsizer:0.0.0
+      - run: shellcheck appliance/build.sh appliance/smoke-test.sh appliance/host/root/opt/rightsizer/bin/rightsizer-host
+      - name: Build the test images
+        run: |
+          docker build --build-arg VERSION=v0.0.0 -t ghcr.io/marcocolomb0/rightsizer:0.0.0 .
+          docker build --build-arg VERSION=v0.0.1 -t rightsizer-ci-upgrade-base .
+          # The upgrade image's host bundle adds a kernel argument, which must
+          # be applied and must ask for a restart.
+          mkdir -p "$RUNNER_TEMP/upgrade"
+          { cat appliance/host/manifest; echo "kernel rightsizer.ci"; } >"$RUNNER_TEMP/upgrade/manifest"
+          printf 'FROM rightsizer-ci-upgrade-base\nCOPY manifest /appliance/manifest\n' >"$RUNNER_TEMP/upgrade/Dockerfile"
+          docker build -t ghcr.io/marcocolomb0/rightsizer:0.0.1 "$RUNNER_TEMP/upgrade"
+      - run: WORK="$RUNNER_TEMP/smoke" appliance/smoke-test.sh ghcr.io/marcocolomb0/rightsizer:0.0.0 ghcr.io/marcocolomb0/rightsizer:0.0.1
       - if: always()
         uses: actions/upload-artifact@v7
         with:

@@ -121,7 +121,18 @@ func (m Model) viewHome() string {
 			b.WriteString("\n" + sMuted.Render("↑ "+msg) + "\n")
 		}
 	}
+	if len(m.sum.Reboot) > 0 {
+		body := sWarn.Render("Restart required") + "\n" + strings.Join(m.sum.Reboot, "\n")
+		if m.opt.Appliance {
+			body += "\n" + sMuted.Render("Press R to restart now. Collection pauses until an administrator logs in again.")
+		}
+		b.WriteString("\n" + sBox.BorderForeground(warn).Render(body) + "\n")
+	}
 	b.WriteString("\n")
+	if m.confirm == "reboot" {
+		b.WriteString(sWarn.Render("Restart the appliance now? This session closes and collection pauses until you log in again. [y/N]"))
+		return b.String()
+	}
 	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF", "x", "exclusions"}
 	if len(m.sum.Shares) > 0 {
 		k = append(k, "s", "stop sharing")
@@ -131,6 +142,9 @@ func (m Model) viewHome() string {
 	}
 	if m.updateAvailable() {
 		k = append(k, "u", "upgrade")
+	}
+	if m.canReboot() {
+		k = append(k, "R", "restart")
 	}
 	b.WriteString(keys(append(k, "q", "quit")...))
 	b.WriteString("\n" + sMuted.Render("Leaving the console does not stop collection."))

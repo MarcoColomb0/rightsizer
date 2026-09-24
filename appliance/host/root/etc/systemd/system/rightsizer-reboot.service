@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart the appliance on request
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rightsizer/bin/rightsizer-host reboot

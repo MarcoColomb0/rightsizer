@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for rightsizer upgrade requests
+
+[Path]
+PathChanged=/var/lib/rightsizer/data/host/upgrade-request
+
+[Install]
+WantedBy=multi-user.target

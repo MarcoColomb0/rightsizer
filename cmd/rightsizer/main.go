@@ -134,14 +134,17 @@ func runDaemon() error {
 	defer stop()
 	slog.Info("rightsizer engine started", "version", version, "appliance", applianceMode())
 
+	var host *appliance.Host
+	if applianceMode() {
+		host = &appliance.Host{Dir: filepath.Join(dataDir(), "host"), Current: version}
+	}
 	errc := make(chan error, 2)
-	go func() { errc <- ipc.Serve(ctx, socket(), e) }()
+	go func() { errc <- ipc.Serve(ctx, socket(), ipc.Local{E: e, Host: host}) }()
 	if applianceMode() {
 		checker := &appliance.Checker{}
 		if env("RIGHTSIZER_UPDATE_CHECK", "true") == "true" {
 			go checker.Run(ctx, 6*time.Hour)
 		}
-		host := &appliance.Host{Dir: filepath.Join(dataDir(), "host"), Current: version}
 		keyPath := filepath.Join(dataDir(), "ssh", "host_ed25519")
 		if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
 			return err
@@ -251,6 +254,9 @@ func printStatus() error {
 	}
 	for _, sh := range s.Shares {
 		fmt.Printf("report: %s (expires %s)\n", sh.URL, sh.Expires.Format(time.RFC1123))
+	}
+	for _, r := range s.Reboot {
+		fmt.Printf("restart required: %s\n", r)
 	}
 	return nil
 }

@@ -3,10 +3,14 @@
 # from the outside: only the rightsizer SSH console is reachable, only the
 # administrator can log in, and nothing but the console is offered.
 #
-#   appliance/smoke-test.sh <engine-image-with-tag>
+#   appliance/smoke-test.sh <engine-image> [upgrade-image]
+#
+# With an upgrade image (tag 0.0.1, whose host bundle adds a kernel
+# argument), the test also upgrades the running appliance and restarts it.
 set -euo pipefail
 
-ENGINE="${1:?usage: smoke-test.sh <engine-image>}"
+ENGINE="${1:?usage: smoke-test.sh <engine-image> [upgrade-image]}"
+UPGRADE="${2:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 . "$HERE/flatcar.env"
@@ -39,10 +43,13 @@ fi
 
 mkdir -p "$WORK/bundle" "$WORK/ign"
 docker save "$ENGINE" | gzip -1 >"$WORK/bundle/rightsizer-image.tar.gz"
+if [ -n "$UPGRADE" ]; then
+	docker save "$UPGRADE" | gzip -1 >"$WORK/bundle/rightsizer-image-upgrade.tar.gz"
+fi
 truncate -s "$(($(du -sm "$WORK/bundle" | cut -f1) + 32))M" "$WORK/bundle.raw"
 mkfs.ext4 -q -F -L RSBUNDLE -d "$WORK/bundle" "$WORK/bundle.raw"
 
-sed "s/@IMAGE_TAG@/${ENGINE##*:}/" "$HERE/butane.yaml" | butane --strict -d "$HERE/files" >"$WORK/ign/appliance.ign"
+python3 "$HERE/render-butane.py" "${ENGINE##*:}" | butane --strict -d "$HERE/host" >"$WORK/ign/appliance.ign"
 butane --strict -d "$WORK/ign" "$HERE/smoke.bu" >"$WORK/smoke.ign"
 
 qemu-img create -q -f qcow2 -F qcow2 -b "$WORK/flatcar.img" "$WORK/disk.qcow2"
@@ -52,7 +59,7 @@ qemu-system-x86_64 -name rightsizer-ci -m 2048 -smp 2 -machine accel=kvm:tcg -cp
 	-drive if=virtio,file="$WORK/disk.qcow2" \
 	-drive if=virtio,format=raw,file="$WORK/bundle.raw",readonly=on \
 	-fw_cfg name=opt/org.flatcar-linux/config,file="$WORK/smoke.ign" \
-	-netdev user,id=n0,hostfwd=tcp:127.0.0.1:${PORT}-:22,hostfwd=tcp:127.0.0.1:8443-:443 \
+	-netdev user,id=n0,hostfwd=tcp:127.0.0.1:${PORT}-:22,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=tcp:127.0.0.1:19901-:9901,hostfwd=tcp:127.0.0.1:19902-:9902 \
 	-device virtio-net-pci,netdev=n0
 
 fail() {
@@ -116,11 +123,6 @@ if timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/8443" 2>/dev/null; then
 fi
 echo "✓ report server closed while nothing is shared"
 
-for _ in $(seq 1 5); do ssh_try admin "wrong password" true >/dev/null || true; done
-out="$(ssh_try admin "$PW" true || true)"
-[[ "$out" != *"only the interactive console"* ]] || fail "address must be locked out after repeated failures"
-echo "✓ repeated failures lock the address out"
-
 if tr -d '\r' <"$WORK/serial.log" | grep -qE 'login: *$'; then
 	fail "the serial console must not offer a login prompt"
 fi
@@ -164,4 +166,60 @@ if grep -qiE "login:|audit|systemd\[" <<<"$text"; then
 $text"
 fi
 echo "✓ VM console shows the status screen: address, SSH key fingerprint, engine running"
+
+# Runs last: QEMU's user networking makes every client the same address,
+# so the lockout would block the logins the other checks need.
+lockout() {
+	for _ in $(seq 1 5); do ssh_try admin "wrong password" true >/dev/null || true; done
+	out="$(ssh_try admin "$PW" true || true)"
+	[[ "$out" != *"only the interactive console"* ]] || fail "address must be locked out after repeated failures"
+	echo "✓ repeated failures lock the address out"
+}
+
+if [ -z "$UPGRADE" ]; then
+	lockout
+	echo "✓ appliance smoke test passed"
+	exit 0
+fi
+
+trigger() { timeout 5 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null || true; }
+
+wait_screen() {
+	local want="$1" not="${2:-}"
+	for _ in $(seq 1 60); do
+		text="$(screen || true)"
+		if grep -qiE "$want" <<<"$text" && { [ -z "$not" ] || ! grep -qiE "$not" <<<"$text"; }; then
+			return 0
+		fi
+		sleep 5
+	done
+	return 1
+}
+
+login_ok() {
+	for _ in $(seq 1 40); do
+		out="$(ssh_try admin "$PW" true || true)"
+		[[ "$out" == *"only the interactive console"* ]] && return 0
+		sleep 5
+	done
+	return 1
+}
+
+trigger 19901
+wait_screen "v0\.0\.1" || fail "the appliance did not upgrade to v0.0.1. OCR read:
+$text"
+wait_screen "restart.*required|required.*kernel" || fail "the kernel change did not raise a restart flag. OCR read:
+$text"
+echo "✓ upgrade applied the new appliance host layer and asks for a restart"
+login_ok || fail "the administrator can no longer log in after the upgrade: $out"
+echo "✓ administrator password and stored data survived the upgrade"
+
+trigger 19902
+sleep 20
+wait_screen "v0\.0\.1" "restart.*required" || fail "after the restart the flag must clear. OCR read:
+$text"
+login_ok || fail "the administrator cannot log in after the restart"
+echo "✓ restart request rebooted the appliance and cleared the flag"
+
+lockout
 echo "✓ appliance smoke test passed"

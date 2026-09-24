@@ -1,0 +1,9 @@
+[Unit]
+Description=Check hourly whether a downloaded OS update needs a restart
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

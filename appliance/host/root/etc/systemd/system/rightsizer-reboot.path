@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for appliance restart requests
+
+[Path]
+PathChanged=/var/lib/rightsizer/data/host/reboot-request
+
+[Install]
+WantedBy=multi-user.target

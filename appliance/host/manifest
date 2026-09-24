@@ -1,0 +1,37 @@
+# Appliance host layer. Installed by Ignition on first boot and by every
+# upgrade, from the engine image's /appliance copy of this directory.
+#
+# file <mode> <path>        installed from root/<path>
+# enable <unit>             enabled and started
+# mask <unit>               masked
+# kernel <arg>              kernel argument that must be present (reboot)
+# kernel -<arg>             kernel argument that must be absent (reboot)
+file 0755 /opt/rightsizer/bin/rightsizer-host
+file 0644 /etc/systemd/system/rightsizer-network.service
+file 0644 /etc/systemd/system/rightsizer.service
+file 0644 /etc/systemd/system/rightsizer-console.service
+file 0644 /etc/systemd/system/rightsizer-upgrade.path
+file 0644 /etc/systemd/system/rightsizer-upgrade.service
+file 0644 /etc/systemd/system/rightsizer-reboot.path
+file 0644 /etc/systemd/system/rightsizer-reboot.service
+file 0644 /etc/systemd/system/rightsizer-os-check.service
+file 0644 /etc/systemd/system/rightsizer-os-check.timer
+file 0644 /etc/sysctl.d/90-rightsizer.conf
+file 0644 /etc/systemd/logind.conf.d/10-rightsizer.conf
+file 0644 /etc/docker/daemon.json
+file 0644 /etc/flatcar/update.conf
+enable rightsizer-network.service
+enable rightsizer.service
+enable rightsizer-console.service
+enable rightsizer-upgrade.path
+enable rightsizer-reboot.path
+enable rightsizer-os-check.timer
+mask sshd.socket
+mask sshd.service
+mask getty@.service
+mask serial-getty@.service
+mask autovt@.service
+mask ctrl-alt-del.target
+mask debug-shell.service
+kernel quiet
+kernel -flatcar.autologin

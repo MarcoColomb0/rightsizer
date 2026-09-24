@@ -33,6 +33,7 @@ type Backend interface {
 	StopShare(id string) error
 	ChangePassword(old, next string) error
 	RequestUpgrade(tag string) error
+	RequestReboot() error
 	Exclusions() ([]analysis.Exclusion, error)
 	Exclude(x analysis.Exclusion) error
 	Unexclude(id string) error
@@ -50,8 +51,16 @@ func (l Local) Summary() (*engine.Summary, error) {
 		if u := l.Host.Status(); u != nil {
 			s.Upgrade = &engine.UpgradeInfo{Version: u.Version, State: u.State, Message: u.Message, Time: u.Time}
 		}
+		s.Reboot = l.Host.RebootReasons()
 	}
 	return &s, nil
+}
+
+func (l Local) RequestReboot() error {
+	if l.Host == nil {
+		return errors.New("only the appliance can be restarted from the console")
+	}
+	return l.Host.RequestReboot()
 }
 
 func (l Local) RequestUpgrade(tag string) error {
@@ -111,9 +120,10 @@ type idRequest struct {
 
 type errorBody struct{ Error string }
 
-// Serve exposes the engine on a unix socket that only the container user can
-// open. Administrator password changes are not available here.
-func Serve(ctx context.Context, sock string, e *engine.Engine) error {
+// Serve exposes the backend on a unix socket that only the engine user can
+// open. The socket cannot change the administrator password or restart the
+// appliance.
+func Serve(ctx context.Context, sock string, b Local) error {
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
@@ -123,7 +133,6 @@ func Serve(ctx context.Context, sock string, e *engine.Engine) error {
 		ln.Close()
 		return err
 	}
-	b := Local{E: e}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /summary", func(w http.ResponseWriter, r *http.Request) {
 		s, err := b.Summary()
@@ -183,7 +192,7 @@ func Serve(ctx context.Context, sock string, e *engine.Engine) error {
 		reply(w, nil, b.Unexclude(r.PathValue("id")))
 	})
 	mux.HandleFunc("GET /latest-report", func(w http.ResponseWriter, r *http.Request) {
-		p, err := e.LatestReport()
+		p, err := b.E.LatestReport()
 		reply(w, idRequest{ID: p}, err)
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -300,6 +309,10 @@ func (c *Client) Exclusions() ([]analysis.Exclusion, error) {
 func (c *Client) Exclude(x analysis.Exclusion) error { return c.call("POST", "/exclusions", x, nil) }
 
 func (c *Client) Unexclude(id string) error { return c.call("DELETE", "/exclusions/"+id, nil, nil) }
+
+func (c *Client) RequestReboot() error {
+	return errors.New("only the appliance can be restarted from the console")
+}
 
 func (c *Client) RequestUpgrade(string) error {
 	return errors.New("upgrades are run by the rightsizer launcher on the host")

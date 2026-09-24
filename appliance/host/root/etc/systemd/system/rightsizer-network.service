@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply rightsizer vApp network settings
+DefaultDependencies=no
+After=systemd-sysext.service local-fs.target
+Before=systemd-networkd.service network-pre.target systemd-timesyncd.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/rightsizer/bin/rightsizer-host network
+
+[Install]
+WantedBy=multi-user.target

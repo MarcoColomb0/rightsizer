@@ -50,7 +50,7 @@ qemu-img convert -O vmdk -o subformat=streamOptimized "$WORK/bundle.raw" "$WORK/
 bundle_capacity=$((size_mb * 1024 * 1024))
 
 echo "› Ignition"
-sed "s/@IMAGE_TAG@/${ENGINE##*:}/" "$HERE/butane.yaml" | butane --strict -d "$HERE/files" >"$WORK/ignition.json"
+python3 "$HERE/render-butane.py" "${ENGINE##*:}" | butane --strict -d "$HERE/host" >"$WORK/ignition.json"
 cp "$WORK/ignition.json" "$OUT/rightsizer-${VERSION}.ign"
 
 echo "› OVF"

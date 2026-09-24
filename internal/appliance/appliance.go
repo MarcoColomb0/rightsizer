@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +111,54 @@ func (h Host) RequestUpgrade(tag string) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(h.Dir, "upgrade-request"))
+}
+
+// bootIDPath is shared with the host kernel, so the engine container sees the
+// same boot ID as the host unit that wrote the flag.
+var bootIDPath = "/proc/sys/kernel/random/boot_id"
+
+type rebootFlag struct {
+	Text   string
+	BootID string
+}
+
+// RebootReasons lists why the appliance needs a restart. Flags written
+// before the current boot are stale and ignored, so a restart clears them.
+func (h Host) RebootReasons() []string {
+	cur, err := os.ReadFile(bootIDPath)
+	if err != nil {
+		return nil
+	}
+	boot := strings.TrimSpace(string(cur))
+	files, _ := filepath.Glob(filepath.Join(h.Dir, "reboot", "*.json"))
+	slices.Sort(files)
+	var out []string
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var r rebootFlag
+		if json.Unmarshal(b, &r) == nil && r.BootID == boot && r.Text != "" {
+			out = append(out, r.Text)
+		}
+	}
+	return out
+}
+
+// RequestReboot asks the appliance host to restart.
+func (h Host) RequestReboot() error {
+	if len(h.RebootReasons()) == 0 {
+		return errors.New("no restart is needed")
+	}
+	if err := os.MkdirAll(h.Dir, 0o700); err != nil {
+		return err
+	}
+	tmp := filepath.Join(h.Dir, ".reboot-request")
+	if err := os.WriteFile(tmp, []byte("reboot\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(h.Dir, "reboot-request"))
 }
 
 func (h Host) Status() *UpgradeStatus {
