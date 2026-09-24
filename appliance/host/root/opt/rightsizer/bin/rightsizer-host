@@ -222,7 +222,8 @@ kernel_args() {
 	sed -i '/^# BEGIN rightsizer/,/^# END rightsizer/d' "$tmp"
 	for a in "$@"; do
 		valid "$KARG" "$a" || continue
-		e="$(sed 's/[.]/\\./g' <<<"${a#-}")"
+		e="${a#-}"
+		e="${e//./\\.}"
 		if [[ "$a" == -* ]]; then
 			sed -i -E "/linux_append/ s/(^|[\" ])${e}([\" ]|$)/\1\2/g" "$tmp"
 		else
@@ -230,7 +231,7 @@ kernel_args() {
 		fi
 	done
 	for a in "${want[@]}"; do
-		e="$(sed 's/[.]/\\./g' <<<"$a")"
+		e="${a//./\\.}"
 		grep 'linux_append' "$tmp" | grep -Eq "(^|[\" ])${e}([\" ]|$)" || missing+=("$a")
 	done
 	if [ "${#missing[@]}" -gt 0 ]; then
