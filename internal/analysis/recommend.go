@@ -460,7 +460,9 @@ func placementFindings(vm vc.VM, vr VMResult, s *VMStats, h vc.Host) []Finding {
 		if wideCPU || wideMem {
 			f := base
 			f.Kind, f.Severity = WideVM, Medium
-			f.Metric = float64(vm.VCPU) / float64(max(perNode, 1))
+			// Rank by whichever overflow is worse, so a VM with four times a
+			// node's memory outranks one barely over.
+			f.Metric = max(float64(vm.VCPU)/float64(max(perNode, 1)), float64(int64(vm.MemMB)<<20)/float64(max(memNode, 1)))
 			f.Current = fmt.Sprintf("%d vCPU / %s on %d-core, %s NUMA nodes", vm.VCPU, gib(vm.MemMB), perNode, human(memNode))
 			switch {
 			case wideCPU && vr.RecVCPU <= perNode && !wideMem:

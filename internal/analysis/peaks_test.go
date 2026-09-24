@@ -129,6 +129,16 @@ func TestPlacementFindings(t *testing.T) {
 	if fs := placementFindings(vc.VM{VCPU: 8, MemMB: 16 << 10}, VMResult{RecVCPU: 4}, &VMStats{}, h); len(fs) != 0 {
 		t.Fatalf("a VM inside one node must not be flagged: %+v", fs)
 	}
+
+	// Memory-only overflow must rank by how far over it is, not by vCPU.
+	narrow := placementFindings(vc.VM{Name: "mem-a", VCPU: 8, MemMB: 300 << 10, Host: "esx1"}, VMResult{}, &VMStats{}, h)
+	wide := placementFindings(vc.VM{Name: "mem-b", VCPU: 8, MemMB: 1000 << 10, Host: "esx1"}, VMResult{}, &VMStats{}, h)
+	if len(narrow) != 1 || len(wide) != 1 || narrow[0].Kind != WideVM {
+		t.Fatalf("memory-wide VMs must be flagged: %+v %+v", narrow, wide)
+	}
+	if impact(wide[0]) <= impact(narrow[0]) {
+		t.Fatalf("a VM far over one node's memory must rank higher: %.2f vs %.2f", impact(wide[0]), impact(narrow[0]))
+	}
 }
 
 func TestOrphanFindingsCountAsReclaimable(t *testing.T) {
