@@ -148,12 +148,14 @@ PY
 text=""
 for _ in $(seq 1 24); do
 	text="$(screen || true)"
-	if grep -qi "rightsizer appliance" <<<"$text" && grep -qi "ssh admin@" <<<"$text"; then
+	if grep -qi "rightsizer appliance" <<<"$text" && grep -qi "ssh admin@" <<<"$text" &&
+		grep -qi "running" <<<"$text" && grep -qi "SSH key" <<<"$text"; then
 		break
 	fi
 	sleep 5
 done
-if ! grep -qi "rightsizer appliance" <<<"$text" || ! grep -qi "ssh admin@" <<<"$text"; then
+if ! grep -qi "rightsizer appliance" <<<"$text" || ! grep -qi "ssh admin@" <<<"$text" ||
+	! grep -qi "running" <<<"$text" || ! grep -qi "SSH key" <<<"$text"; then
 	fail "the VM console does not show the status screen. OCR read:
 $text"
 fi
@@ -161,5 +163,5 @@ if grep -qiE "login:|audit|systemd\[" <<<"$text"; then
 	fail "the VM console shows a login prompt or log lines. OCR read:
 $text"
 fi
-echo "✓ VM console shows the status screen with the SSH address"
+echo "✓ VM console shows the status screen: address, SSH key fingerprint, engine running"
 echo "✓ appliance smoke test passed"

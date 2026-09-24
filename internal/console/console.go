@@ -74,7 +74,7 @@ func Render(version, dataDir string, src Source) string {
 	}
 	b.WriteString("\n")
 	if s, err := src.Summary(); err != nil {
-		line("Engine", warn.Render("starting…"))
+		line("Engine", warn.Render("starting..."))
 	} else {
 		n := map[engine.Phase]int{}
 		for _, x := range s.Sources {

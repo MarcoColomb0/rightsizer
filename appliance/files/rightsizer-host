@@ -149,7 +149,11 @@ install_console() {
 }
 
 prepare() {
-	install -d -m 0700 "$STATE" "$BACKUPS"
+	# Traverse-only, so the console user can reach its data directory without
+	# listing or reading the root-owned files next to it.
+	install -d -m 0711 "$STATE"
+	chmod 0711 "$STATE"
+	install -d -m 0700 "$BACKUPS"
 	install -d -m 0700 -o "$UID_ENGINE" -g "$UID_ENGINE" "$DATA" "$DATA/host"
 	chown "$UID_ENGINE:$UID_ENGINE" "$BACKUPS"
 	admin_password

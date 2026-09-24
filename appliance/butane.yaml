@@ -28,7 +28,7 @@ storage:
     - path: /opt/rightsizer/bin
       mode: 0755
     - path: /var/lib/rightsizer
-      mode: 0700
+      mode: 0711
   files:
     - path: /opt/rightsizer/bin/rightsizer-host
       mode: 0755
