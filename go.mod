@@ -2,7 +2,7 @@ module github.com/MarcoColomb0/rightsizer
 
 go 1.26.0
 
-toolchain go1.26.8
+toolchain go1.27.1
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
