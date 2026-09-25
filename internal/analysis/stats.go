@@ -80,17 +80,19 @@ func (s *Stat) Avg() float64 {
 }
 
 type VMStats struct {
-	CPU      Hist
-	Mem      Hist
-	Ready    Stat
-	CoStop   Stat
-	CPUMHz   Stat
-	Consumed Stat
-	Disk     Stat
-	Net      Stat
-	First    time.Time
-	Last     time.Time
-	Samples  uint64
+	CPU       Hist
+	Mem       Hist
+	Ready     Stat
+	CoStop    Stat
+	CPUMHz    Stat
+	Consumed  Stat
+	Disk      Stat
+	Net       Stat
+	ReadIOPS  Stat
+	WriteIOPS Stat
+	First     time.Time
+	Last      time.Time
+	Samples   uint64
 	// Demand holds average CPU MHz per 30-minute slot since Store.Anchor.
 	Demand []float32
 	Slots  []uint16
@@ -116,13 +118,19 @@ type ClusterStats struct {
 	Mem    Hist
 	CPUMHz Stat
 	MemB   Stat
+	// Net, IOPS and KBps are the network and storage load of all hosts.
+	Net    LogHist
+	IOPS   LogHist
+	KBps   LogHist
 	Points []Point
 	acc    map[time.Time]*bucket
 }
 
 type bucket struct {
-	cpu, mem float64
-	n        int
+	cpu, mem        float64
+	net, iops, kbps float64
+	hasNet, hasIO   bool
+	n               int
 }
 
 const pointEvery = 5 * time.Minute
@@ -130,6 +138,8 @@ const pointEvery = 5 * time.Minute
 type Store struct {
 	VMs      map[string]*VMStats
 	Clusters map[string]*ClusterStats
+	// IO is keyed by datastore instance; "" holds all datastores together.
+	IO       map[string]*IOStats
 	HostLast map[string]time.Time
 	Polls    uint64
 	Anchor   time.Time
@@ -138,7 +148,7 @@ type Store struct {
 // NewStore keeps demand slots from anchor onwards.
 func NewStore(anchor time.Time) *Store {
 	return &Store{
-		VMs: map[string]*VMStats{}, Clusters: map[string]*ClusterStats{}, HostLast: map[string]time.Time{},
+		VMs: map[string]*VMStats{}, Clusters: map[string]*ClusterStats{}, IO: map[string]*IOStats{}, HostLast: map[string]time.Time{},
 		Anchor: anchor.Truncate(SlotLength),
 	}
 }
@@ -193,6 +203,8 @@ func (st *Store) AddVM(s vc.Series, vcpu int) {
 		vs.Consumed.AddN(at(vc.MemConsume), w)
 		vs.Disk.AddN(at(vc.DiskUsage), w)
 		vs.Net.AddN(at(vc.NetUsage), w)
+		vs.ReadIOPS.AddN(s.Sum(vc.ReadIOPS, i), w)
+		vs.WriteIOPS.AddN(s.Sum(vc.WriteIOPS, i), w)
 		st.addDemand(vs, ts, mhz, s.Interval)
 		if vs.First.IsZero() {
 			vs.First = ts.Add(-time.Duration(secs) * time.Second)
@@ -251,9 +263,19 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 		t  time.Time
 	}
 	sum := map[key]*bucket{}
+	io := map[key]*ioSample{}
+	ioAt := func(ds string, t time.Time) *ioSample {
+		a := io[key{ds, t}]
+		if a == nil {
+			a = &ioSample{}
+			io[key{ds, t}] = a
+		}
+		return a
+	}
 	for _, s := range series {
 		cl := hostCluster[s.Ref]
 		last := st.HostLast[s.Ref]
+		insts := instances(s)
 		for i, ts := range s.TS {
 			if !ts.After(last) {
 				continue
@@ -270,8 +292,37 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 			if v := s.Values[vc.MemConsume]; i < len(v) && v[i] >= 0 {
 				b.mem += v[i] * 1024
 			}
+			if v := s.Values[vc.NetUsage]; i < len(v) && v[i] >= 0 {
+				b.net += v[i]
+				b.hasNet = true
+			}
+			var host ioSample
+			for _, inst := range insts {
+				host.add(s, inst, i)
+				ioAt(inst, ts).add(s, inst, i)
+				ioAt("", ts).add(s, inst, i)
+			}
+			if host.ok {
+				b.iops += host.r + host.w
+				b.kbps += host.rkb + host.wkb
+				b.hasIO = true
+			}
 			st.HostLast[s.Ref] = ts
 		}
+	}
+	if st.IO == nil {
+		st.IO = map[string]*IOStats{}
+	}
+	for k, a := range io {
+		if !a.ok {
+			continue
+		}
+		d := st.IO[k.cl]
+		if d == nil {
+			d = &IOStats{}
+			st.IO[k.cl] = d
+		}
+		d.add(a, k.t, w, k.cl == "")
 	}
 	for k, b := range sum {
 		cs := st.Clusters[k.cl]
@@ -288,6 +339,13 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 		}
 		cs.CPUMHz.AddN(b.cpu, w)
 		cs.MemB.AddN(b.mem, w)
+		if b.hasNet {
+			cs.Net.AddN(b.net, w)
+		}
+		if b.hasIO {
+			cs.IOPS.AddN(b.iops, w)
+			cs.KBps.AddN(b.kbps, w)
+		}
 		if cs.acc == nil {
 			cs.acc = map[time.Time]*bucket{}
 		}
@@ -304,10 +362,23 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 	for _, cs := range st.Clusters {
 		cs.flush(time.Now().Add(-2 * pointEvery))
 	}
+	for _, d := range st.IO {
+		d.flush(time.Now().Add(-2 * pointEvery))
+	}
 }
 
 // Flush moves every pending demand bucket into Points.
 func (cs *ClusterStats) Flush() { cs.flush(time.Now().Add(time.Hour)) }
+
+// Flush completes the timelines of every cluster and of the storage total.
+func (st *Store) Flush() {
+	for _, c := range st.Clusters {
+		c.Flush()
+	}
+	for _, d := range st.IO {
+		d.Flush()
+	}
+}
 
 func (cs *ClusterStats) flush(before time.Time) {
 	for t, a := range cs.acc {

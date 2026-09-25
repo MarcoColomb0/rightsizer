@@ -119,18 +119,22 @@ func (s *Source) run() {
 	}()
 }
 
-// background imports vCenter's history once and scans datastores for
-// orphaned disks every day, without delaying the 5-minute polls.
+// background reads the hardware estate, imports vCenter's history once and
+// scans datastores for orphaned disks every day, without delaying the
+// 5-minute polls.
 func (s *Source) background(ctx context.Context) {
 	for {
 		s.mu.Lock()
 		cl, inv, hist := s.client, s.st.Inventory, s.st.HistoryState
-		scanned, synced := s.st.WasteScanned, s.st.HistorySync
+		scanned, synced, surveyed := s.st.WasteScanned, s.st.HistorySync, s.st.EstateTaken
 		s.mu.Unlock()
 		wait := backgroundTick
 		if cl == nil || inv == nil {
 			wait = 2 * time.Second
 		} else {
+			if time.Since(surveyed) >= estateEvery {
+				s.scanEstate(ctx, cl)
+			}
 			switch {
 			case hist == "" || strings.HasPrefix(hist, "loading"):
 				s.importHistory(ctx, cl, inv)
@@ -203,9 +207,7 @@ func (s *Source) importHistory(ctx context.Context, cl *vc.Client, inv *vc.Inven
 			return
 		}
 	}
-	for _, c := range hist.Clusters {
-		c.Flush()
-	}
+	hist.Flush()
 	s.mu.Lock()
 	s.st.History = hist
 	s.st.HistoryStep = plan[0].Interval
@@ -269,13 +271,30 @@ func (s *Source) syncHistory(ctx context.Context, cl *vc.Client, inv *vc.Invento
 	}
 	hist.AddHosts(hs, hc, cp)
 	live.AddHosts(hs, hc, cp)
-	for _, c := range hist.Clusters {
-		c.Flush()
-	}
+	hist.Flush()
 	s.st.HistorySync = time.Now()
 	_ = s.save()
 	s.mu.Unlock()
 	s.refreshResult()
+}
+
+// scanEstate reads host adapters, cluster settings and datastore backing for
+// sizing. A failure is retried after an hour.
+func (s *Source) scanEstate(ctx context.Context, cl *vc.Client) {
+	e, err := cl.Estate(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		slog.Warn("estate scan", "source", s.id, "err", err)
+		s.st.EstateTaken = time.Now().Add(time.Hour - estateEvery)
+		return
+	}
+	s.st.Estate = e.Filter(s.st.Config.Clusters)
+	s.st.EstateTaken = e.Taken
+	_ = s.save()
 }
 
 func (s *Source) scanWaste(ctx context.Context, cl *vc.Client, inv *vc.Inventory) {
@@ -518,6 +537,29 @@ func (s *Source) refreshResult() {
 	r.Final = s.st.Phase == Done
 	r.VCenter = fmt.Sprintf("%s — %s", s.st.Config.Host, s.st.About)
 	s.result = r
+}
+
+func (s *Source) sizing(p analysis.SizingParams) *analysis.Sizing {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Inventory == nil {
+		return nil
+	}
+	end := time.Now()
+	if !s.st.Finished.IsZero() {
+		end = s.st.Finished
+	}
+	sz := analysis.Size(analysis.SizingInput{
+		Input: analysis.Input{
+			Inv: s.st.Inventory, RT: s.st.Store, History: s.st.History, Live: s.st.HistoryLive,
+			Profile: analysis.ProfileByName(s.st.Config.Profile),
+			Start:   s.st.Started, End: end, Planned: s.st.Config.Duration,
+		},
+		Result: s.result, Estate: s.st.Estate, Params: p,
+	})
+	sz.VCenter = fmt.Sprintf("%s — %s", s.st.Config.Host, s.st.About)
+	sz.Final = s.st.Phase == Done
+	return sz
 }
 
 func (s *Source) currentResult() *analysis.Result {

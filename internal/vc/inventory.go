@@ -30,6 +30,9 @@ type Disk struct {
 	Capacity  int64
 	Thin      bool
 	Datastore string
+	// RDM is "physical" or "virtual" for raw device mappings, whose data
+	// lives on a LUN outside the datastore.
+	RDM string
 }
 
 type GuestDisk struct {
@@ -50,6 +53,7 @@ type VM struct {
 	Cluster       string
 	Host          string
 	GuestOS       string
+	GuestID       string
 	PowerOn       bool
 	Template      bool
 	VCPU          int
@@ -61,6 +65,14 @@ type VM struct {
 	GuestDisks    []GuestDisk
 	Snapshots     []Snapshot
 	SnapshotBytes int64
+	// DiskBytes is the space used by the base virtual disks, SwapBytes by
+	// the swap files the host creates at power-on.
+	DiskBytes     int64
+	SwapBytes     int64
+	CPUReserveMHz int64
+	MemReserveMB  int64
+	VGPU          []string
+	Passthrough   int
 	ToolsOK       bool
 	Files         []string
 }
@@ -83,10 +95,10 @@ type Inventory struct {
 }
 
 var vmProps = []string{
-	"name", "config.instanceUuid", "config.template", "config.guestFullName", "config.hardware.numCPU",
+	"name", "config.instanceUuid", "config.template", "config.guestFullName", "config.guestId", "config.hardware.numCPU",
 	"config.hardware.numCoresPerSocket", "config.hardware.memoryMB", "config.hardware.device", "runtime.powerState",
 	"runtime.host", "summary.storage", "guest.disk", "guest.toolsRunningStatus",
-	"snapshot", "layoutEx",
+	"snapshot", "layoutEx", "config.cpuAllocation", "config.memoryAllocation",
 }
 
 var hostProps = []string{
@@ -176,7 +188,27 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 	return inv, nil
 }
 
+func convertDisk(disk *types.VirtualDisk) Disk {
+	vd := Disk{Capacity: disk.CapacityInBytes, Thin: true}
+	if disk.DeviceInfo != nil {
+		vd.Label = disk.DeviceInfo.GetDescription().Label
+	}
+	switch b := disk.Backing.(type) {
+	case *types.VirtualDiskFlatVer2BackingInfo:
+		vd.Thin = b.ThinProvisioned != nil && *b.ThinProvisioned
+		vd.Datastore = datastoreOf(b.FileName)
+	case *types.VirtualDiskRawDiskMappingVer1BackingInfo:
+		vd.Datastore = datastoreOf(b.FileName)
+		vd.RDM = "virtual"
+		if b.CompatibilityMode == string(types.VirtualDiskCompatibilityModePhysicalMode) {
+			vd.RDM = "physical"
+		}
+	}
+	return vd
+}
+
 func convertVM(m *mo.VirtualMachine, hostCluster, hostName map[string]string) VM {
+	rdm := map[int32]bool{}
 	vm := VM{
 		Ref:     m.Self.Value,
 		Name:    m.Name,
@@ -191,28 +223,34 @@ func convertVM(m *mo.VirtualMachine, hostCluster, hostName map[string]string) VM
 		vm.UUID = m.Config.InstanceUuid
 		vm.Template = m.Config.Template
 		vm.GuestOS = m.Config.GuestFullName
+		vm.GuestID = m.Config.GuestId
 		vm.VCPU = int(m.Config.Hardware.NumCPU)
 		vm.CoresPerSock = 1
 		if c := m.Config.Hardware.NumCoresPerSocket; c != nil && *c > 0 {
 			vm.CoresPerSock = int(*c)
 		}
 		vm.MemMB = int(m.Config.Hardware.MemoryMB)
+		if a := m.Config.CpuAllocation; a != nil && a.Reservation != nil {
+			vm.CPUReserveMHz = *a.Reservation
+		}
+		if a := m.Config.MemoryAllocation; a != nil && a.Reservation != nil {
+			vm.MemReserveMB = *a.Reservation
+		}
 		for _, d := range m.Config.Hardware.Device {
-			disk, ok := d.(*types.VirtualDisk)
-			if !ok {
-				continue
+			switch dev := d.(type) {
+			case *types.VirtualDisk:
+				vd := convertDisk(dev)
+				if vd.RDM != "" {
+					rdm[dev.Key] = true
+				}
+				vm.Disks = append(vm.Disks, vd)
+			case *types.VirtualPCIPassthrough:
+				if b, ok := dev.Backing.(*types.VirtualPCIPassthroughVmiopBackingInfo); ok {
+					vm.VGPU = append(vm.VGPU, b.Vgpu)
+				} else {
+					vm.Passthrough++
+				}
 			}
-			vd := Disk{Capacity: disk.CapacityInBytes}
-			if disk.DeviceInfo != nil {
-				vd.Label = disk.DeviceInfo.GetDescription().Label
-			}
-			if b, ok := disk.Backing.(*types.VirtualDiskFlatVer2BackingInfo); ok {
-				vd.Thin = b.ThinProvisioned != nil && *b.ThinProvisioned
-				vd.Datastore = datastoreOf(b.FileName)
-			} else {
-				vd.Thin = true
-			}
-			vm.Disks = append(vm.Disks, vd)
 		}
 	}
 	if s := m.Summary.Storage; s != nil {
@@ -238,6 +276,7 @@ func convertVM(m *mo.VirtualMachine, hostCluster, hostName map[string]string) VM
 		if len(vm.Snapshots) > 0 {
 			vm.SnapshotBytes = snapshotBytes(m.LayoutEx)
 		}
+		vm.DiskBytes, vm.SwapBytes = layoutBytes(m.LayoutEx, rdm)
 		for _, f := range m.LayoutEx.File {
 			if strings.HasSuffix(f.Name, ".vmdk") {
 				vm.Files = append(vm.Files, f.Name)
@@ -276,6 +315,31 @@ func snapshotBytes(l *types.VirtualMachineFileLayoutEx) int64 {
 		}
 	}
 	return total
+}
+
+// layoutBytes returns the size of the base disks, skipping raw device
+// mappings, and of the swap files.
+func layoutBytes(l *types.VirtualMachineFileLayoutEx, rdm map[int32]bool) (disk, swap int64) {
+	size := map[int32]int64{}
+	for _, f := range l.File {
+		size[f.Key] = f.Size
+		if f.Type == "swap" || f.Type == "uwswap" {
+			swap += f.Size
+		}
+	}
+	seen := map[int32]bool{}
+	for _, d := range l.Disk {
+		if rdm[d.Key] || len(d.Chain) == 0 {
+			continue
+		}
+		for _, k := range d.Chain[0].FileKey {
+			if !seen[k] {
+				seen[k] = true
+				disk += size[k]
+			}
+		}
+	}
+	return disk, swap
 }
 
 func datastoreOf(path string) string {

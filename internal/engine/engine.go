@@ -39,6 +39,7 @@ var (
 	pollEvery      = 5 * time.Minute
 	inventoryEvery = time.Hour
 	wasteEvery     = 24 * time.Hour
+	estateEvery    = 24 * time.Hour
 	historyEvery   = time.Hour
 	backgroundTick = time.Minute
 	historyBack    = 14 * 24 * time.Hour
@@ -77,6 +78,8 @@ type state struct {
 	Orphans      []vc.OrphanDisk
 	WasteNote    string
 	WasteScanned time.Time
+	Estate       *vc.Estate
+	EstateTaken  time.Time
 }
 
 type Status struct {
@@ -131,6 +134,7 @@ type Engine struct {
 	mu      sync.Mutex
 	sources map[string]*Source
 	excl    []analysis.Exclusion
+	sizing  analysis.SizingParams
 }
 
 func New(dir string, web *report.Server, v *vault.Vault) (*Engine, error) {
@@ -139,6 +143,9 @@ func New(dir string, web *report.Server, v *vault.Vault) (*Engine, error) {
 		return nil, err
 	}
 	if err := e.loadExclusions(); err != nil {
+		return nil, err
+	}
+	if err := e.loadSizing(); err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(e.sourcesDir())
@@ -394,7 +401,7 @@ func (e *Engine) Remove(id string) error {
 	}
 	s.stop()
 	for _, sh := range e.web.Shares() {
-		if sh.Source == id {
+		if sh.Source == id || sh.Source == sizingShare(id) {
 			e.web.Stop(sh.ID)
 		}
 	}

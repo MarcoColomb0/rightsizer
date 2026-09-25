@@ -34,11 +34,18 @@ type Share struct {
 	Expires     time.Time
 	File        string
 	Downloads   int
+	// Extra holds further files shared under the same link, such as data.
+	Extra []Link
+}
+
+type Link struct {
+	Name string
+	URL  string
 }
 
 type entry struct {
 	Share
-	path  string
+	files map[string]string
 	timer *time.Timer
 }
 
@@ -69,8 +76,9 @@ func (s *Server) Shares() []Share {
 	return out
 }
 
-// Serve shares path, replacing any earlier share of the same source.
-func (s *Server) Serve(source, path string) (*Share, error) {
+// Serve shares path and any extra files, replacing any earlier share of the
+// same source.
+func (s *Server) Serve(source, path string, extra ...string) (*Share, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, e := range s.shares {
@@ -89,16 +97,24 @@ func (s *Server) Serve(source, path string) (*Share, error) {
 	}
 	id := base64.RawURLEncoding.EncodeToString(tok)
 	name := filepath.Base(path)
+	link := func(n string) string {
+		return fmt.Sprintf("https://%s/%s/%s", net.JoinHostPort(s.PublicHost, s.port), id, n)
+	}
 	e := &entry{
 		Share: Share{
 			ID:          id[:8],
 			Source:      source,
-			URL:         fmt.Sprintf("https://%s/%s/%s", net.JoinHostPort(s.PublicHost, s.port), id, name),
+			URL:         link(name),
 			Fingerprint: s.fp,
 			Expires:     time.Now().Add(s.TTL),
 			File:        name,
 		},
-		path: path,
+		files: map[string]string{name: path},
+	}
+	for _, p := range extra {
+		n := filepath.Base(p)
+		e.files[n] = p
+		e.Extra = append(e.Extra, Link{Name: n, URL: link(n)})
 	}
 	if s.shares == nil {
 		s.shares = map[string]*entry{}
@@ -186,19 +202,18 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tok, name, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	path := ""
 	s.mu.Lock()
-	e := s.shares[tok]
-	if ok && e != nil && e.File == name {
+	if e := s.shares[tok]; ok && e != nil && e.files[name] != "" {
 		e.Downloads++
-	} else {
-		e = nil
+		path = e.files[name]
 	}
 	s.mu.Unlock()
-	if e == nil {
+	if path == "" {
 		http.NotFound(w, r)
 		return
 	}
-	f, err := os.Open(e.path)
+	f, err := os.Open(path)
 	if err != nil {
 		http.Error(w, "report unavailable", http.StatusGone)
 		return
@@ -209,10 +224,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "report unavailable", http.StatusGone)
 		return
 	}
-	h.Set("Content-Type", "application/pdf")
+	h.Set("Content-Type", contentType(name))
 	h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	slog.Info("report downloaded", "file", name, "remote", r.RemoteAddr)
 	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+func contentType(name string) string {
+	switch filepath.Ext(name) {
+	case ".pdf":
+		return "application/pdf"
+	case ".zip":
+		return "application/zip"
+	}
+	return "application/octet-stream"
 }
 
 func selfSigned(host string) (tls.Certificate, string, error) {

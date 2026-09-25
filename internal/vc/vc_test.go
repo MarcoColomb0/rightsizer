@@ -230,3 +230,70 @@ func TestOrphanedDisks(t *testing.T) {
 		t.Fatal("first-class disks must be skipped")
 	}
 }
+
+func TestEstate(t *testing.T) {
+	creds, done := sim(t)
+	defer done()
+	ctx := context.Background()
+	c, err := Connect(ctx, creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(ctx)
+	e, err := c.Estate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.Hosts) == 0 || len(e.Clusters) == 0 || len(e.Datastores) == 0 {
+		t.Fatalf("empty estate: %d hosts, %d clusters, %d datastores", len(e.Hosts), len(e.Clusters), len(e.Datastores))
+	}
+	h := e.Hosts[0]
+	if h.Cores == 0 || h.MemBytes == 0 || h.ESXi == "" || len(h.HBAs) == 0 || len(h.NICs) == 0 {
+		t.Fatalf("incomplete host %+v", h)
+	}
+	for _, d := range e.Datastores {
+		if d.ID == "" || d.Capacity == 0 || len(d.Hosts) == 0 {
+			t.Fatalf("incomplete datastore %+v", d)
+		}
+	}
+	if f := e.Filter([]string{e.Clusters[0].Name}); len(f.Hosts) == 0 || len(f.Hosts) >= len(e.Hosts) {
+		t.Fatalf("filter kept %d of %d hosts", len(f.Hosts), len(e.Hosts))
+	}
+	t.Logf("host %+v", h)
+	t.Logf("datastore %+v", e.Datastores[0])
+	t.Logf("cluster %+v", e.Clusters[0])
+}
+
+func TestDatastoreCounters(t *testing.T) {
+	creds, done := sim(t)
+	defer done()
+	ctx := context.Background()
+	c, err := Connect(ctx, creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(ctx)
+	inv, err := c.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hosts []string
+	for _, h := range inv.Hosts {
+		hosts = append(hosts, h.Ref)
+	}
+	ss, err := c.Sample(ctx, "HostSystem", hosts, HostMetrics, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ss) == 0 || len(ss[0].Inst[ReadIOPS]) == 0 {
+		t.Fatalf("no per-datastore samples: %+v", ss)
+	}
+	for _, v := range ss[0].Inst[ReadIOPS] {
+		if len(v) != len(ss[0].TS) {
+			t.Fatalf("%d values for %d samples", len(v), len(ss[0].TS))
+		}
+	}
+	if _, ok := ss[0].Values[ReadIOPS]; ok {
+		t.Fatal("per-datastore counter must not be reported as an aggregate")
+	}
+}

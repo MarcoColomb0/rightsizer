@@ -346,3 +346,132 @@ func TestExclusionsPersistAndApply(t *testing.T) {
 	}
 	e2.Shutdown()
 }
+
+func TestSizing(t *testing.T) {
+	a, b := newSim(t), newSim(t)
+	defer a.close()
+	defer b.close()
+	dir := t.TempDir()
+	web := &report.Server{Listen: "127.0.0.1:0", PublicHost: "127.0.0.1", TTL: time.Hour}
+	e, err := New(dir, web, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.SizingParams() != analysis.DefaultSizing() {
+		t.Fatal("defaults expected")
+	}
+	p := analysis.DefaultSizing()
+	p.Growth, p.Groups = 35, "web=DC0_C0*"
+	if err := e.SetSizingParams(p); err != nil {
+		t.Fatal(err)
+	}
+	bad := p
+	bad.Sockets = 9
+	if e.SetSizingParams(bad) == nil {
+		t.Fatal("invalid parameters must be rejected")
+	}
+	ctx := context.Background()
+	ida, err := e.Add(ctx, a.cfg(), a.pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := b.cfg()
+	cfg.Clusters = []string{"DC0_C1"}
+	idb, err := e.Add(ctx, cfg, b.pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPolls(t, e, ida, 1)
+	waitPolls(t, e, idb, 1)
+	var sz *analysis.Sizing
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		sz, err = e.Sizing(ida)
+		if err == nil && !sz.EstateTaken.IsZero() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no estate: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if sz.Params.Growth != 35 || len(sz.Clusters) == 0 || len(sz.Hosts) == 0 || sz.VMs != nil || sz.Storage.RawUsed == 0 {
+		t.Fatalf("sizing incomplete: %+v", sz)
+	}
+	if o, ok := sz.Clusters[0].Needs[0].Picked(); !ok || o.Nodes < 2 {
+		t.Fatalf("no node recommendation: %+v", sz.Clusters[0].Needs[0])
+	}
+	sb, err := e.Sizing(idb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range sb.Hosts {
+		if h.Cluster != "DC0_C1" {
+			t.Fatalf("cluster filter must apply to the estate: %s", h.Cluster)
+		}
+	}
+
+	sh, err := e.PublishSizing(ida)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sh.Source != "sizing:"+ida || len(sh.Extra) != 1 || !strings.HasSuffix(sh.Extra[0].URL, "-data.zip") {
+		t.Fatalf("share %+v", sh)
+	}
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	for _, u := range []string{sh.URL, sh.Extra[0].URL} {
+		res, err := hc.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != 200 || len(body) < 100 {
+			t.Fatalf("%s: %d", u, res.StatusCode)
+		}
+		if strings.HasSuffix(u, ".zip") && res.Header.Get("Content-Type") != "application/zip" {
+			t.Fatalf("content type %q", res.Header.Get("Content-Type"))
+		}
+	}
+	if _, err := e.Publish(ida); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(e.web.Shares()); n != 2 {
+		t.Fatalf("the sizing and the rightsizing report are shared side by side, got %d shares", n)
+	}
+	all, err := e.PublishSizing("")
+	if err != nil || all.Source != "sizing:all" {
+		t.Fatalf("combined sizing: %+v %v", all, err)
+	}
+	merged, err := e.Sizing("")
+	if err != nil || !strings.HasPrefix(merged.VCenter, "2 vCenters") {
+		t.Fatalf("merged %v %v", merged, err)
+	}
+	if err := e.Remove(ida); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range e.web.Shares() {
+		if strings.HasSuffix(s.Source, ida) {
+			t.Fatalf("share of a removed source still running: %+v", s)
+		}
+	}
+	e.Shutdown()
+
+	e2, err := New(dir, web, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e2.SizingParams(); got != p {
+		t.Fatalf("parameters must survive a restart: %+v", got)
+	}
+	e2.mu.Lock()
+	src := e2.sources[idb]
+	e2.mu.Unlock()
+	src.mu.Lock()
+	kept := src.st.Estate != nil && len(src.st.Estate.Hosts) > 0
+	src.mu.Unlock()
+	if !kept {
+		t.Fatal("the estate must be saved with the source")
+	}
+	e2.Shutdown()
+}

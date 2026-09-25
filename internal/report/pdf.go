@@ -38,8 +38,10 @@ var (
 
 type doc struct {
 	*fpdf.Fpdf
-	tr func(string) string
-	r  *analysis.Result
+	tr     func(string) string
+	r      *analysis.Result
+	title  string
+	source string
 }
 
 const (
@@ -48,21 +50,42 @@ const (
 	content = pageW - 2*margin
 )
 
-func WritePDF(r *analysis.Result, path string) error {
+func newDoc(title, source string, created time.Time) *doc {
 	p := fpdf.New("P", "mm", "A4", "")
 	p.SetMargins(margin, 18, margin)
 	p.SetAutoPageBreak(true, 18)
-	p.SetTitle("vSphere Rightsizing Report", true)
+	p.SetTitle(title, true)
 	p.SetAuthor("rightsizer by "+Author, true)
 	p.SetCreator("rightsizer "+Version, true)
-	p.SetCreationDate(r.Generated)
+	p.SetCreationDate(created)
 	p.AliasNbPages("{nb}")
 	p.AddUTF8FontFromBytes("Go", "", goregular.TTF)
 	p.AddUTF8FontFromBytes("Go", "B", gobold.TTF)
 	p.AddUTF8FontFromBytes("Go", "I", goitalic.TTF)
-	d := &doc{Fpdf: p, tr: func(s string) string { return s }, r: r}
+	d := &doc{Fpdf: p, tr: func(s string) string { return s }, title: title, source: source}
 	p.SetFooterFunc(d.footer)
 	p.SetHeaderFunc(d.header)
+	return d
+}
+
+// save writes the document next to path and renames it into place.
+func (d *doc) save(path string) error {
+	if err := d.Error(); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := d.OutputFileAndClose(tmp); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func WritePDF(r *analysis.Result, path string) error {
+	d := newDoc("vSphere Rightsizing Report", r.VCenter, r.Generated)
+	d.r = r
 
 	d.cover()
 	d.refresh()
@@ -74,18 +97,7 @@ func WritePDF(r *analysis.Result, path string) error {
 	d.findings()
 	d.vmTable()
 	d.method()
-
-	if err := p.Error(); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := p.OutputFileAndClose(tmp); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return d.save(path)
 }
 
 func (d *doc) color(c rgb)                 { d.SetTextColor(c.r, c.g, c.b) }
@@ -104,8 +116,8 @@ func (d *doc) header() {
 	d.font("", 7.5)
 	d.color(cMuted)
 	d.SetY(8)
-	d.CellFormat(content/2, 4, d.tr("vSphere Rightsizing Report"), "", 0, "L", false, 0, "")
-	d.CellFormat(content/2, 4, d.tr(d.r.VCenter), "", 1, "R", false, 0, "")
+	d.CellFormat(content/2, 4, d.tr(d.title), "", 0, "L", false, 0, "")
+	d.CellFormat(content/2, 4, d.tr(d.source), "", 1, "R", false, 0, "")
 	d.draw(cRule)
 	d.Line(margin, 13, pageW-margin, 13)
 	d.SetY(18)
@@ -314,7 +326,8 @@ func (d *doc) refresh() {
 	d.AddPage()
 	d.h1("Tech refresh sizing")
 	d.para(fmt.Sprintf("Required capacity per cluster, derived from observed demand (p%.0f) with the %s profile: CPU sized so hosts run at ≤%.0f%% and memory at ≤%.0f%% "+
-		"after rightsizing. Required GHz and GB are hardware-neutral, so they can be matched against any new server model. Host counts assume the current host type plus one HA spare.",
+		"after rightsizing. Required GHz and GB are hardware-neutral, so they can be matched against any new server model. Host counts assume the current host type plus one HA spare. "+
+		"For node shapes, ports and storage capacity, build the hardware refresh sizing PDF from the Sizing tab.",
 		r.Profile.Percentile, r.Profile.Name, r.Profile.HostCPU*100, r.Profile.HostMem*100))
 	rows := [][]string{}
 	for _, c := range r.Clusters {

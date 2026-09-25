@@ -85,6 +85,7 @@ type Finding struct {
 }
 
 type VMResult struct {
+	Ref        string
 	Name       string
 	Cluster    string
 	PowerOn    bool
@@ -514,7 +515,7 @@ func rightsize(vm vc.VM, s *VMStats, p Profile, window float64) (VMResult, []Fin
 	h := s.Hours()
 	cf := conf(h, window)
 	vr := VMResult{
-		Name: vm.Name, Cluster: vm.Cluster, PowerOn: vm.PowerOn, VCPU: vm.VCPU, MemMB: vm.MemMB,
+		Ref: vm.Ref, Name: vm.Name, Cluster: vm.Cluster, PowerOn: vm.PowerOn, VCPU: vm.VCPU, MemMB: vm.MemMB,
 		CPUP: s.CPU.Pct(p.Percentile), CPUMax: s.CPU.Max, MemP: s.Mem.Pct(p.Percentile),
 		ReadyAvg: s.Ready.Avg(), CoStopAvg: s.CoStop.Avg(), Hours: h, Confidence: cf, RecVCPU: vm.VCPU, RecMemMB: vm.MemMB,
 	}

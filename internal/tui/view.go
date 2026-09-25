@@ -37,6 +37,8 @@ func (m Model) View() string {
 		body = m.viewExclude()
 	case scrExclusions:
 		body = m.viewExclusions()
+	case scrSizing:
+		body = m.viewSizingOpts()
 	}
 	out := m.header() + "\n\n" + body
 	if m.note != "" {
@@ -133,7 +135,7 @@ func (m Model) viewHome() string {
 		b.WriteString(sWarn.Render("Restart the appliance now? This session closes and collection pauses until you log in again. [y/N]"))
 		return b.String()
 	}
-	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF", "x", "exclusions"}
+	k := []string{"↑/↓", "select", "enter", "open", "a", "add vCenter", "p", "combined PDF", "z", "sizing PDF", "o", "sizing options", "x", "exclusions"}
 	if len(m.sum.Shares) > 0 {
 		k = append(k, "s", "stop sharing")
 	}
@@ -185,9 +187,16 @@ func sharesBox(shares []report.Share, sources []engine.Status) string {
 	var b strings.Builder
 	b.WriteString(sBold.Render("Shared reports"))
 	for _, sh := range shares {
-		b.WriteString(fmt.Sprintf("\n%s  %s\n%s", sBold.Render(names[sh.Source]),
+		name := names[sh.Source]
+		if id, ok := strings.CutPrefix(sh.Source, "sizing:"); ok {
+			name = "Sizing · " + names[id]
+		}
+		b.WriteString(fmt.Sprintf("\n%s  %s\n%s", sBold.Render(name),
 			sMuted.Render(fmt.Sprintf("expires %s · %d downloads", sh.Expires.Format("Jan 02 15:04"), sh.Downloads)),
 			sAccent.Render(sh.URL)))
+		for _, x := range sh.Extra {
+			b.WriteString("\n" + sAccent.Render(x.URL) + sMuted.Render("  spreadsheet data (CSV)"))
+		}
 	}
 	b.WriteString("\n" + sMuted.Render("Self-signed TLS, SHA-256 "+shares[0].Fingerprint))
 	return sBox.BorderForeground(accent).Render(b.String())
@@ -197,7 +206,7 @@ func (m Model) shares(id string) []report.Share {
 	var out []report.Share
 	if m.sum != nil {
 		for _, sh := range m.sum.Shares {
-			if sh.Source == id {
+			if sh.Source == id || sh.Source == "sizing:"+id {
 				out = append(out, sh)
 			}
 		}
@@ -348,7 +357,9 @@ func (m Model) viewSource() string {
 	var b strings.Builder
 	b.WriteString(m.progressLine() + "\n\n")
 	if r := s.Result; r != nil {
-		b.WriteString(kpis(r) + "\n")
+		if m.tab != 3 {
+			b.WriteString(kpis(r) + "\n")
+		}
 	} else {
 		b.WriteString(m.spin.View() + sMuted.Render(" Waiting for the first samples…") + "\n\n")
 	}
@@ -359,7 +370,7 @@ func (m Model) viewSource() string {
 	if sh := m.shares(s.ID); len(sh) > 0 {
 		b.WriteString(sharesBox(sh, []engine.Status{*s}) + "\n")
 	}
-	tabs := []string{"1 Clusters", "2 Findings", "3 Peaks"}
+	tabs := []string{"1 Clusters", "2 Findings", "3 Peaks", "4 Sizing"}
 	for i, t := range tabs {
 		if i == m.tab {
 			tabs[i] = sTabOn.Render(t)
@@ -385,6 +396,8 @@ func (m Model) viewSource() string {
 		}
 	case 2:
 		b.WriteString(peaksView(s.Result))
+	case 3:
+		b.WriteString(m.scrolled(m.sizingView(), lipgloss.Height(b.String())))
 	}
 	b.WriteString("\n\n")
 	switch m.confirm {
@@ -395,9 +408,12 @@ func (m Model) viewSource() string {
 		b.WriteString(sBad.Render("Remove this source with all its data and reports? [y/N]"))
 		return b.String()
 	}
-	k := []string{"esc", "back", "1-3", "tabs", "p", "PDF"}
-	if m.tab == 1 {
+	k := []string{"esc", "back", "1-4", "tabs", "p", "PDF"}
+	switch m.tab {
+	case 1:
 		k = append(k, "/", "search", "e", "exclude")
+	case 3:
+		k = []string{"esc", "back", "1-4", "tabs", "p", "sizing PDF + data", "o", "sizing options"}
 	}
 	if len(m.shares(s.ID)) > 0 {
 		k = append(k, "s", "stop sharing")

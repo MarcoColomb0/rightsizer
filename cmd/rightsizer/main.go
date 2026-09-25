@@ -254,6 +254,9 @@ func printStatus() error {
 	}
 	for _, sh := range s.Shares {
 		fmt.Printf("report: %s (expires %s)\n", sh.URL, sh.Expires.Format(time.RFC1123))
+		for _, x := range sh.Extra {
+			fmt.Printf("        %s\n", x.URL)
+		}
 	}
 	for _, r := range s.Reboot {
 		fmt.Printf("restart required: %s\n", r)

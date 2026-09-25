@@ -15,6 +15,10 @@ import (
 )
 
 func demo() *analysis.Result {
+	return analyzeDemo(demoInput())
+}
+
+func demoInput() analysis.Input {
 	rng := rand.New(rand.NewPCG(1, 2))
 	end := time.Date(2026, 9, 21, 9, 0, 0, 0, time.UTC)
 	start := end.Add(-14 * 24 * time.Hour)
@@ -86,12 +90,17 @@ func demo() *analysis.Result {
 		}
 		st.Clusters[name] = cs
 	}
-	r := analysis.Analyze(analysis.Input{Inv: inv, RT: st, Profile: analysis.ProfileByName("balanced"), Start: start, End: end, Planned: 14 * 24 * time.Hour,
+	return analysis.Input{Inv: inv, RT: st, Profile: analysis.ProfileByName("balanced"), Start: start, End: end, Planned: 14 * 24 * time.Hour,
 		Exclusions: []analysis.Exclusion{
 			{ID: "1", Name: "dmz01-db07", Reason: "Vendor requirement", Note: "Vendor sizing guide for the appliance requires 8 vCPU and 32 GB.", Created: end.Add(-40 * 24 * time.Hour)},
 			{ID: "2", Name: "prod01-web*", Kinds: []analysis.Kind{analysis.MemOver}, Reason: "Planned change", Note: "Web tier moves to containers in Q1; no resizing before.", Created: end.Add(-100 * 24 * time.Hour), ReviewBy: end.Add(-10 * 24 * time.Hour)},
 		},
-		Orphans: []vc.OrphanDisk{{Datastore: "ds-prod-01", Path: "[ds-prod-01] old-sql02/old-sql02.vmdk", Size: 412 << 30, Modified: end.Add(-200 * 24 * time.Hour)}}})
+		Orphans: []vc.OrphanDisk{{Datastore: "ds-prod-01", Path: "[ds-prod-01] old-sql02/old-sql02.vmdk", Size: 412 << 30, Modified: end.Add(-200 * 24 * time.Hour)}}}
+}
+
+func analyzeDemo(in analysis.Input) *analysis.Result {
+	start := in.Start
+	r := analysis.Analyze(in)
 	r.Final = true
 	r.Accuracy = &analysis.Accuracy{VMs: 64, HoursBoth: 330, Percentile: 95, CPUMedian: 0.66, MemMedian: 0.94,
 		Bursty: []analysis.Burst{{VM: "prod01-app14", RealtimeP: 81, HistoryP: 37, RealtimeMx: 100}, {VM: "dmz01-svc08", RealtimeP: 64, HistoryP: 33, RealtimeMx: 92}}}

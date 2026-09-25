@@ -22,15 +22,25 @@ const (
 	MemConsume = "mem.consumed.average"
 	DiskUsage  = "disk.usage.average"
 	NetUsage   = "net.usage.average"
+
+	ReadIOPS  = "datastore.numberReadAveraged.average"
+	WriteIOPS = "datastore.numberWriteAveraged.average"
+	ReadKBps  = "datastore.read.average"
+	WriteKBps = "datastore.write.average"
+	ReadLat   = "datastore.totalReadLatency.average"
+	WriteLat  = "datastore.totalWriteLatency.average"
 )
 
 var (
-	VMMetrics   = []string{CPUUsage, CPUReady, CPUCoStop, CPUMHz, MemUsage, MemConsume, DiskUsage, NetUsage}
-	HostMetrics = []string{CPUMHz, MemConsume}
-	// HistoryVMMetrics are statistics level 1 counters, kept by every vCenter
-	// in its historical rollups.
-	HistoryVMMetrics = []string{CPUUsage, CPUReady, CPUMHz, MemUsage, MemConsume, DiskUsage, NetUsage}
-	optional         = map[string]bool{CPUCoStop: true}
+	VMMetrics   = []string{CPUUsage, CPUReady, CPUCoStop, CPUMHz, MemUsage, MemConsume, DiskUsage, NetUsage, ReadIOPS, WriteIOPS}
+	HostMetrics = []string{CPUMHz, MemConsume, NetUsage, ReadIOPS, WriteIOPS, ReadKBps, WriteKBps, ReadLat, WriteLat}
+	// HistoryVMMetrics are the counters vCenter keeps in its historical
+	// rollups at the default statistics level; the datastore ones are read
+	// when a higher level keeps them.
+	HistoryVMMetrics = []string{CPUUsage, CPUReady, CPUMHz, MemUsage, MemConsume, DiskUsage, NetUsage, ReadIOPS, WriteIOPS}
+	optional         = map[string]bool{CPUCoStop: true, ReadIOPS: true, WriteIOPS: true, ReadKBps: true, WriteKBps: true, ReadLat: true, WriteLat: true}
+	// perDatastore counters are reported once per datastore instance.
+	perDatastore = map[string]bool{ReadIOPS: true, WriteIOPS: true, ReadKBps: true, WriteKBps: true, ReadLat: true, WriteLat: true}
 )
 
 const (
@@ -47,12 +57,30 @@ type perfCounters struct {
 }
 
 // Series holds the samples of one entity in ascending time order. Interval
-// is the length in seconds that each sample represents.
+// is the length in seconds that each sample represents. Inst holds the
+// per-datastore counters by datastore instance.
 type Series struct {
 	Ref      string
 	Interval int32
 	TS       []time.Time
 	Values   map[string][]float64
+	Inst     map[string]map[string][]float64
+}
+
+// Sum adds a per-datastore counter over all datastores at sample i, or
+// returns -1 when it was not reported.
+func (s Series) Sum(name string, i int) float64 {
+	total, ok := 0.0, false
+	for _, v := range s.Inst[name] {
+		if i < len(v) && v[i] >= 0 {
+			total += v[i]
+			ok = true
+		}
+	}
+	if !ok {
+		return -1
+	}
+	return total
 }
 
 func (c *Client) counters(ctx context.Context) (*perfCounters, error) {
@@ -145,7 +173,11 @@ func (c *Client) query(ctx context.Context, kind string, refs []string, metrics 
 	ids := make([]types.PerfMetricId, 0, len(metrics))
 	for _, m := range metrics {
 		if id, ok := pc.byName[m]; ok {
-			ids = append(ids, types.PerfMetricId{CounterId: id, Instance: ""})
+			inst := ""
+			if perDatastore[m] {
+				inst = "*"
+			}
+			ids = append(ids, types.PerfMetricId{CounterId: id, Instance: inst})
 		}
 	}
 	pm := performance.NewManager(c.vim)
@@ -212,10 +244,14 @@ func convert(em *types.PerfEntityMetric, pc *perfCounters, interval int32) Serie
 	}
 	for _, v := range em.Value {
 		iv, ok := v.(*types.PerfMetricIntSeries)
-		if !ok || iv.Id.Instance != "" {
+		if !ok {
 			continue
 		}
 		name := pc.byID[iv.Id.CounterId]
+		inst := perDatastore[name]
+		if !inst && iv.Id.Instance != "" || inst && iv.Id.Instance == "" {
+			continue
+		}
 		vals := make([]float64, n)
 		for k, i := range order {
 			if i < len(iv.Value) {
@@ -224,7 +260,17 @@ func convert(em *types.PerfEntityMetric, pc *perfCounters, interval int32) Serie
 				vals[k] = -1
 			}
 		}
-		s.Values[name] = vals
+		if !inst {
+			s.Values[name] = vals
+			continue
+		}
+		if s.Inst == nil {
+			s.Inst = map[string]map[string][]float64{}
+		}
+		if s.Inst[name] == nil {
+			s.Inst[name] = map[string][]float64{}
+		}
+		s.Inst[name][iv.Id.Instance] = vals
 	}
 	return s
 }
@@ -244,13 +290,27 @@ func trim(s Series, w Window) Series {
 	if len(idx) == len(s.TS) {
 		return s
 	}
+	pick := func(v []float64) []float64 {
+		out := make([]float64, 0, len(idx))
+		for _, i := range idx {
+			out = append(out, v[i])
+		}
+		return out
+	}
 	out := Series{Ref: s.Ref, Interval: s.Interval, Values: map[string][]float64{}}
 	for _, i := range idx {
 		out.TS = append(out.TS, s.TS[i])
 	}
 	for k, v := range s.Values {
-		for _, i := range idx {
-			out.Values[k] = append(out.Values[k], v[i])
+		out.Values[k] = pick(v)
+	}
+	for k, m := range s.Inst {
+		if out.Inst == nil {
+			out.Inst = map[string]map[string][]float64{}
+		}
+		out.Inst[k] = map[string][]float64{}
+		for inst, v := range m {
+			out.Inst[k][inst] = pick(v)
 		}
 	}
 	return out

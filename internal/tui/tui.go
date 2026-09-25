@@ -32,6 +32,7 @@ const (
 	scrUpdate
 	scrExclude
 	scrExclusions
+	scrSizing
 )
 
 // ExitUpgrade tells the host launcher that the user asked to upgrade.
@@ -129,6 +130,14 @@ type Model struct {
 
 	srch   search
 	srchIn textinput.Model
+
+	sz       *analysis.Sizing
+	szID     string
+	szErr    string
+	szAt     time.Time
+	szf      sizingForm
+	szIn     [8]textinput.Model
+	szScroll int
 }
 
 func New(b ipc.Backend, opt Options) Model {
@@ -145,6 +154,12 @@ func New(b ipc.Backend, opt Options) Model {
 	m.exNote.CharLimit = 500
 	m.exName = input("citrix-*", false)
 	m.srchIn = newSearchInput()
+	for i := range m.szIn {
+		m.szIn[i] = input("", false)
+		m.szIn[i].CharLimit = 16
+	}
+	m.szIn[szInput[soGroups]].CharLimit = 1000
+	m.szIn[szInput[soGroups]].Placeholder = "none: group by guest OS"
 	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(sAccent))
 	m.prog = progress.New(progress.WithSolidFill(string(accent.Dark)), progress.WithoutPercentage())
 	m.tbl = table.New(table.WithFocused(true))
@@ -194,6 +209,9 @@ func (m Model) fetch() tea.Cmd {
 			s, err := b.Source(cur)
 			return sourceMsg{s, err}
 		})
+	}
+	if scr == scrSource && m.tab == 3 && time.Since(m.szAt) >= sizingEvery {
+		cmds = append(cmds, m.fetchSizing())
 	}
 	return tea.Batch(cmds...)
 }
@@ -254,6 +272,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case doneMsg:
 		return m.done(msg)
+	case sizingMsg:
+		m.szAt = time.Now()
+		if msg.id != m.cur {
+			return m, nil
+		}
+		m.szID, m.szErr = msg.id, ""
+		if msg.err != nil {
+			m.sz, m.szErr = nil, msg.err.Error()
+			return m, nil
+		}
+		m.sz = msg.sz
+		return m, nil
+	case sizingParamsMsg:
+		return m.sizingParams(msg)
 	case exclusionsMsg:
 		if msg.err == nil {
 			m.excl = msg.xs
@@ -283,6 +315,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.keyExclude(msg)
 		case scrExclusions:
 			return m.keyExclusions(msg)
+		case scrSizing:
+			return m.keySizing(msg)
 		case scrLoading:
 			if msg.String() == "q" {
 				return m, tea.Quit
@@ -306,6 +340,8 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 			m.scr = scrSettings
 		case "exclude":
 			m.scr = scrExclude
+		case "sizing-params":
+			m.scr = scrSizing
 		default:
 			m.scr = m.back
 		}
@@ -335,6 +371,11 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 	case "unexclude":
 		m.scr, m.note = scrExclusions, "Exclusion removed."
 		return m, tea.Batch(m.fetch(), m.fetchExclusions())
+	case "sizing-params":
+		m.scr, m.note, m.szAt = m.szf.ret, "Sizing options saved.", time.Time{}
+		if m.scr == scrSource {
+			return m, tea.Batch(m.fetch(), m.fetchSizing())
+		}
 	case "reboot":
 		m.scr, m.note = scrHome, "The appliance is restarting. This session will close; reconnect in a few minutes and log in so collection resumes."
 	case "upgrade":
@@ -409,6 +450,16 @@ func (m Model) keyHome(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "x":
 		m.scr, m.err, m.exSel = scrExclusions, "", 0
 		return m, m.fetchExclusions()
+	case "z":
+		if n > 0 {
+			b := m.b
+			return m.busyCmd("Building the combined sizing PDF and data…", "publish", "", func() error {
+				_, err := b.PublishSizing("")
+				return err
+			})
+		}
+	case "o":
+		return m.openSizingOptions(scrHome)
 	case "c":
 		if m.opt.AdminSettings {
 			m.scr, m.pwFocus, m.err = scrSettings, 0, ""
@@ -583,9 +634,23 @@ func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tab = 1
 	case "3":
 		m.tab = 2
+	case "4":
+		m.tab, m.szScroll = 3, 0
+		return m, m.fetchSizing()
 	case "tab":
-		m.tab = (m.tab + 1) % 3
+		m.tab = (m.tab + 1) % 4
+		if m.tab == 3 {
+			return m, m.fetchSizing()
+		}
+	case "o":
+		return m.openSizingOptions(scrSource)
 	case "p":
+		if m.tab == 3 {
+			return m.busyCmd("Building the sizing PDF and data…", "publish", id, func() error {
+				_, err := m.b.PublishSizing(id)
+				return err
+			})
+		}
 		return m.busyCmd("Building the PDF report…", "publish", id, func() error {
 			_, err := m.b.Publish(id)
 			return err
@@ -619,10 +684,22 @@ func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openExclude()
 		}
 	default:
-		if m.tab == 1 {
+		switch m.tab {
+		case 1:
 			var cmd tea.Cmd
 			m.tbl, cmd = m.tbl.Update(k)
 			return m, cmd
+		case 3:
+			switch key {
+			case "up", "k":
+				return m.scrollSizing(-1), nil
+			case "down", "j":
+				return m.scrollSizing(1), nil
+			case "pgup":
+				return m.scrollSizing(-10), nil
+			case "pgdown", " ":
+				return m.scrollSizing(10), nil
+			}
 		}
 	}
 	return m, nil

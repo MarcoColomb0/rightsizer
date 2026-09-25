@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -37,6 +38,10 @@ type Backend interface {
 	Exclusions() ([]analysis.Exclusion, error)
 	Exclude(x analysis.Exclusion) error
 	Unexclude(id string) error
+	Sizing(id string) (*analysis.Sizing, error)
+	SizingParams() (*analysis.SizingParams, error)
+	SetSizingParams(p analysis.SizingParams) error
+	PublishSizing(id string) (*report.Share, error)
 }
 
 // Local serves the console in-process. Host is set on the appliance.
@@ -99,6 +104,14 @@ func (l Local) Exclude(x analysis.Exclusion) error {
 	return err
 }
 func (l Local) Unexclude(id string) error { return l.E.Unexclude(id) }
+
+func (l Local) Sizing(id string) (*analysis.Sizing, error) { return l.E.Sizing(id) }
+func (l Local) SizingParams() (*analysis.SizingParams, error) {
+	p := l.E.SizingParams()
+	return &p, nil
+}
+func (l Local) SetSizingParams(p analysis.SizingParams) error  { return l.E.SetSizingParams(p) }
+func (l Local) PublishSizing(id string) (*report.Share, error) { return l.E.PublishSizing(id) }
 
 func (l Local) Finish(id string) error                   { return l.E.Finish(id) }
 func (l Local) Remove(id string) error                   { return l.E.Remove(id) }
@@ -190,6 +203,27 @@ func Serve(ctx context.Context, sock string, b Local) error {
 	})
 	mux.HandleFunc("DELETE /exclusions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, nil, b.Unexclude(r.PathValue("id")))
+	})
+	mux.HandleFunc("GET /sizing", func(w http.ResponseWriter, r *http.Request) {
+		sz, err := b.Sizing(r.URL.Query().Get("id"))
+		reply(w, sz, err)
+	})
+	mux.HandleFunc("GET /sizing/params", func(w http.ResponseWriter, r *http.Request) {
+		p, err := b.SizingParams()
+		reply(w, p, err)
+	})
+	mux.HandleFunc("PUT /sizing/params", func(w http.ResponseWriter, r *http.Request) {
+		var p analysis.SizingParams
+		if decode(w, r, &p) {
+			reply(w, nil, b.SetSizingParams(p))
+		}
+	})
+	mux.HandleFunc("POST /sizing/publish", func(w http.ResponseWriter, r *http.Request) {
+		var req idRequest
+		if decode(w, r, &req) {
+			sh, err := b.PublishSizing(req.ID)
+			reply(w, sh, err)
+		}
 	})
 	mux.HandleFunc("GET /latest-report", func(w http.ResponseWriter, r *http.Request) {
 		p, err := b.E.LatestReport()
@@ -309,6 +343,25 @@ func (c *Client) Exclusions() ([]analysis.Exclusion, error) {
 func (c *Client) Exclude(x analysis.Exclusion) error { return c.call("POST", "/exclusions", x, nil) }
 
 func (c *Client) Unexclude(id string) error { return c.call("DELETE", "/exclusions/"+id, nil, nil) }
+
+func (c *Client) Sizing(id string) (*analysis.Sizing, error) {
+	var sz analysis.Sizing
+	return &sz, c.call("GET", "/sizing?id="+url.QueryEscape(id), nil, &sz)
+}
+
+func (c *Client) SizingParams() (*analysis.SizingParams, error) {
+	var p analysis.SizingParams
+	return &p, c.call("GET", "/sizing/params", nil, &p)
+}
+
+func (c *Client) SetSizingParams(p analysis.SizingParams) error {
+	return c.call("PUT", "/sizing/params", p, nil)
+}
+
+func (c *Client) PublishSizing(id string) (*report.Share, error) {
+	var s report.Share
+	return &s, c.call("POST", "/sizing/publish", idRequest{ID: id}, &s)
+}
 
 func (c *Client) RequestReboot() error {
 	return errors.New("only the appliance can be restarted from the console")

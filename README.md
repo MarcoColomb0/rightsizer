@@ -10,7 +10,7 @@ rightsizer watches one or more VMware vCenters for 24 hours to 14 days, compares
 ## Features
 
 - **VM rightsizing:** oversized and undersized vCPU and memory, with a confidence level for each recommendation.
-- **Refresh sizing:** required GHz, cores, RAM and hosts per cluster, including an HA spare. The figures are hardware-neutral, so you can apply them to any server model.
+- **Hardware refresh sizing:** a dedicated Sizing tab and PDF for replacing hosts and storage. It suggests node shapes (CPUs × cores, RAM) and counts per cluster, sized from the VMs as provisioned or as rightsized, with growth and HA spares. It lists the network, FC and out-of-band ports each node needs, and the raw used storage before any data reduction, split by workload and datastore, with measured IOPS, throughput, I/O size and latency. It also inventories today's hosts, NICs, HBAs and link speeds, storage MTU, LUN backing and cluster settings, and flags what the refresh must handle: CPU vendor changes, the largest VMs, vGPU and passthrough devices, raw device mappings and reservations. The data behind it downloads as CSV.
 - **Peak-aware sizing:** VMs rarely peak at the same time. rightsizer measures how much less CPU a cluster needs than the sum of its VMs' peaks (the diversity factor), and shows an hour-of-week demand heatmap. It also shows which VMs peak together and which peak at different times.
 - **Day-one preview:** when an analysis starts, rightsizer imports the last 14 days of history stored in vCenter, so first results are available within minutes. Each VM switches to precise 20-second data once it has 24 hours of it.
 - **History accuracy check:** during the run, rightsizer keeps reading vCenter's 5-minute averages and compares them with the 20-second data for the same period. It shows how much the averages understate utilisation, lists bursty VMs whose peaks the averages hide, and warns when the 14 days before the analysis had a clearly higher peak than the window itself.
@@ -88,7 +88,7 @@ rightsizer
 2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
 3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
 
-On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `/` searches forward and `?` backward as in vim (incremental, case-insensitive unless the pattern has capitals), `n`/`N` jump to the next or previous match, and `e` excludes the selected VM or disk. Inside a vCenter, the tabs show clusters (`1`), findings (`2`) and peak analysis (`3`). `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `z` a combined sizing PDF, `o` edits the sizing options, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `/` searches forward and `?` backward as in vim (incremental, case-insensitive unless the pattern has capitals), `n`/`N` jump to the next or previous match, and `e` excludes the selected VM or disk. Inside a vCenter, the tabs show clusters (`1`), findings (`2`), peak analysis (`3`) and hardware refresh sizing (`4`). `p` builds its PDF (on the sizing tab, the sizing PDF and its CSV data), `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
 
 Results marked **preview** come from vCenter's stored averages (5-minute to 2-hour samples). Averages smooth out short peaks, so preview utilisation reads low. Treat preview recommendations as a first look.
 
@@ -147,6 +147,16 @@ Every five minutes rightsizer collects the 20-second real-time samples of each p
 - **History preview:** each stored interval is read only for the period it alone covers (finest first), and every sample is weighted by the time it represents.
 
 Active memory can understate what databases and JVMs reserve. Check memory reductions against in-guest metrics before applying them.
+
+### Hardware refresh sizing
+
+The sizing options (`o`) apply to every vCenter and are kept across upgrades: compute basis (as provisioned, the default, or rightsized), powered-off VMs in or out, growth (20%), vCPU per core (automatic: today's ratio, at least 4:1), CPU and memory targets with the HA spares out (70% and 90%), HA spares per cluster (1), sockets per node (2), per-core uplift of the new CPUs (0%), storage kept free (20%) and workload groups by VM name pattern (for example `databases=sql*,*ora*; vdi=vdi-*`, otherwise by guest OS).
+
+- **Cores** = the larger of vCPU ÷ vCPU per core, and measured CPU demand ÷ CPU target ÷ today's per-core clock (raised by the uplift). **RAM** = configured memory + 5% ÷ memory target, without overcommit.
+- **Node options** use 16 to 128 cores per CPU and 256 GB to 4 TB of RAM, and must hold the largest VM. Below 16 cores per CPU is not suggested, because vSphere is licensed per core with at least 16 counted per CPU. The recommended option has the fewest servers among those within 10% of the lowest total cores, preferring nodes where the largest VM fits in one socket.
+- **Ports** per node: 2 × 25 GbE and 2 × 32G FC (or 2 Ethernet storage ports for NFS, iSCSI, NVMe/TCP and vSAN), plus 1 × 1 GbE out-of-band. A faster speed is suggested when today's adapters are faster or the measured peak per node would fill more than 40-50% of the pair.
+- **Raw used storage** = VM disks + snapshots + other VM files + templates + raw device mappings, as vSphere sees them, before any data reduction. Swap files (recreated at power-on) and orphaned disks are listed but not included. **Planned usable** = raw used × growth ÷ (1 − free space). Apply the data reduction you expect for each workload type to these figures.
+- **Storage performance** sums every host's 20-second datastore counters at each sample, so the percentile and peak IOPS, MB/s and latency describe all datastores at once.
 
 ## Development
 

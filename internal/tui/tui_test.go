@@ -25,6 +25,31 @@ type fake struct {
 	excl     []analysis.Exclusion
 	rebooted bool
 	lockedPw bool
+	sz       *analysis.Sizing
+	params   analysis.SizingParams
+	sized    []string
+}
+
+func (f *fake) Sizing(string) (*analysis.Sizing, error) {
+	if f.sz == nil {
+		return nil, errors.New("inventory not loaded yet")
+	}
+	return f.sz, nil
+}
+func (f *fake) SizingParams() (*analysis.SizingParams, error) {
+	p := f.params
+	return &p, nil
+}
+func (f *fake) SetSizingParams(p analysis.SizingParams) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	f.params = p
+	return nil
+}
+func (f *fake) PublishSizing(id string) (*report.Share, error) {
+	f.sized = append(f.sized, id)
+	return &report.Share{}, nil
 }
 
 func (f *fake) Summary() (*engine.Summary, error)     { return &f.sum, nil }
@@ -84,9 +109,22 @@ func demo() *fake {
 	b := engine.Status{ID: "bbbb0002", Phase: engine.NeedPassword, Config: engine.Config{Host: "vcsa02.corp.local", User: "ro@vsphere.local", Profile: "balanced"}, Started: now.Add(-48 * time.Hour), Ends: now.Add(24 * time.Hour)}
 	src := a
 	src.Result = res
+	opt := analysis.NodeOption{Nodes: 5, Sockets: 2, CoresPerSocket: 16, MemGB: 768, TotalCores: 160, CPUUtil: 36, MemUtil: 62}
+	need := analysis.Need{Basis: analysis.BasisProvisioned, Options: []analysis.NodeOption{opt}, Pick: 0,
+		Ports: analysis.PortPlan{DataPorts: 2, DataGb: 25, StoragePorts: 2, StorageKind: "FC", StorageGb: 32, OOBPorts: 1}}
+	sz := &analysis.Sizing{Params: analysis.DefaultSizing(), Percentile: 95,
+		Clusters: []analysis.ClusterSizing{{Name: "prod-cl01", Hosts: 4, Cores: 128, VMs: 40, VMsOff: 2, VCPU: 344, Ratio: 2.7,
+			Protocols: []string{"FC", "NFS"}, Links: analysis.Connectivity{NICs: "8 × 10 GbE", NICsDown: 4, HBAs: "8 × FC 16G", StorageMTU: "9000"},
+			Needs: []analysis.Need{need, {Basis: analysis.BasisRightsized, Pick: -1}}}},
+		Totals: analysis.SizingTotals{Hosts: 4, Cores: 128, MemB: 2 << 40, New: []analysis.NewTotals{{Basis: analysis.BasisProvisioned, Nodes: 5, Cores: 160, MemGB: 3840}, {Basis: analysis.BasisRightsized, Nodes: 4, Cores: 128, MemGB: 2048}}},
+		Storage: analysis.StorageSizing{RawUsed: 5 << 40, Plan: 7 << 40, Used: 8 << 40, Capacity: 15 << 40,
+			IO: analysis.IOSummary{Available: true, IOPS: 37608, IOPSPeak: 38000, ReadPct: 70, MBps: 890, IOSizeKB: 24, LatencyMs: 2.8}},
+		Notes: []string{"Hosts run Intel CPUs."}}
 	return &fake{
-		sum: engine.Summary{Sources: []engine.Status{a, b}, Shares: []report.Share{{ID: "s1", Source: "all", URL: "https://10.0.0.5:8443/abc/rightsizer-interim.pdf", Fingerprint: "AA:BB", Expires: now.Add(24 * time.Hour)}}, Vault: engine.VaultState{Enabled: true}},
-		src: src,
+		sz:     sz,
+		params: analysis.DefaultSizing(),
+		sum:    engine.Summary{Sources: []engine.Status{a, b}, Shares: []report.Share{{ID: "s1", Source: "all", URL: "https://10.0.0.5:8443/abc/rightsizer-interim.pdf", Fingerprint: "AA:BB", Expires: now.Add(24 * time.Hour)}}, Vault: engine.VaultState{Enabled: true}},
+		src:    src,
 	}
 }
 
@@ -109,7 +147,7 @@ func run(m Model, cmd tea.Cmd) Model {
 		for _, c := range out {
 			m = run(m, c)
 		}
-	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg:
+	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg, sizingMsg, sizingParamsMsg:
 		nm, next := m.Update(out)
 		m = run(nm.(Model), next)
 	}
@@ -371,5 +409,58 @@ func TestFindingsSearch(t *testing.T) {
 	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.scr != scrHome {
 		t.Fatal("second esc must go back")
+	}
+}
+
+func TestSizingTab(t *testing.T) {
+	f := demo()
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), tea.KeyMsg{Type: tea.KeyEnter})
+	m = send(t, m, m.fetch()(), keys1("4"))
+	view(t, m, "4 Sizing", "Recommended nodes", "5 × 2 × 16-core CPU, 768 GB", "160 cores, today 128", "2 × 32G FC", "Rightsized instead: 4 nodes",
+		"Raw used", "5.0 TB", "IOPS p95", "37,608", "8 × FC 16G", "storage MTU 9000", "Hosts run Intel CPUs", "sizing PDF + data")
+	small := send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	if v := small.View(); !strings.Contains(v, "↑/↓ scroll · lines 1-") || strings.Contains(v, "Hosts run Intel CPUs") {
+		t.Fatalf("a short terminal must scroll the sizing:\n%s", v)
+	}
+	small = send(t, small, tea.KeyMsg{Type: tea.KeyDown}, tea.KeyMsg{Type: tea.KeyPgDown})
+	if small.szScroll != 11 || !strings.Contains(small.View(), "Hosts run Intel CPUs") {
+		t.Fatalf("scroll offset %d", small.szScroll)
+	}
+	m = send(t, m, keys1("p"))
+	if len(f.sized) != 1 || f.sized[0] != "aaaa0001" {
+		t.Fatalf("p on the sizing tab must publish the sizing, got %v", f.sized)
+	}
+
+	m = send(t, m, keys1("o"))
+	if m.scr != scrSizing {
+		t.Fatalf("o must open the sizing options, got %v", m.scr)
+	}
+	view(t, m, "Sizing options", "As provisioned", "Workload groups")
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyTab}, tea.KeyMsg{Type: tea.KeyTab},
+		tea.KeyMsg{Type: tea.KeyBackspace}, tea.KeyMsg{Type: tea.KeyBackspace}, keys1("x"))
+	for m.szf.focus != soSave {
+		m = send(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !strings.Contains(m.err, "growth") || m.szf.focus != soGrowth {
+		t.Fatalf("a bad number must be reported on its field: %q", m.err)
+	}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyBackspace}, keys1("35"))
+	for m.szf.focus != soGroups {
+		m = send(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = send(t, m, keys1("db=sql*"), tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyEnter})
+	if f.params.Growth != 35 || f.params.Basis != analysis.BasisRightsized || f.params.Groups != "db=sql*" {
+		t.Fatalf("options not saved: %+v (%s)", f.params, m.err)
+	}
+	if m.scr != scrSource {
+		t.Fatal("saving must return to the source")
+	}
+	view(t, m, "Sizing options saved")
+
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc}, keys1("z"))
+	if len(f.sized) != 2 || f.sized[1] != "" {
+		t.Fatalf("z must publish the combined sizing, got %v", f.sized)
 	}
 }
