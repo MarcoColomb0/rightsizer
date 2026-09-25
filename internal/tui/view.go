@@ -380,6 +380,9 @@ func (m Model) viewSource() string {
 		}
 	case 1:
 		b.WriteString(m.tbl.View())
+		if st := m.searchStatus(); st != "" {
+			b.WriteString("\n" + st)
+		}
 	case 2:
 		b.WriteString(peaksView(s.Result))
 	}
@@ -394,7 +397,7 @@ func (m Model) viewSource() string {
 	}
 	k := []string{"esc", "back", "1-3", "tabs", "p", "PDF"}
 	if m.tab == 1 {
-		k = append(k, "e", "exclude")
+		k = append(k, "/", "search", "e", "exclude")
 	}
 	if len(m.shares(s.ID)) > 0 {
 		k = append(k, "s", "stop sharing")

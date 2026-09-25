@@ -48,6 +48,8 @@ Pick one of the two options.
 
    Check that the key fingerprint matches the one on the VM console, then enter the administrator password.
 
+In vCenter the VM reports its guest OS as "rightsizer appliance" with the rightsizer and Flatcar versions, through VMware Tools.
+
 The appliance needs 2 vCPU, 2 GB of memory and about 14 GB of thin-provisioned disk. It needs HTTPS access to each vCenter. Workstations reach it on port 22 (console) and port 443 (report downloads).
 
 Change the administrator password from the console (`c`) after the first login. Changing it later in the vApp options resets it and clears the stored vCenter credentials. That is the recovery path if the password is lost.
@@ -86,7 +88,7 @@ rightsizer
 2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
 3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
 
-On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `e` excludes the selected VM or disk. Inside a vCenter, the tabs show clusters (`1`), findings (`2`) and peak analysis (`3`). `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `/` searches forward and `?` backward as in vim (incremental, case-insensitive unless the pattern has capitals), `n`/`N` jump to the next or previous match, and `e` excludes the selected VM or disk. Inside a vCenter, the tabs show clusters (`1`), findings (`2`) and peak analysis (`3`). `p` builds its PDF, `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
 
 Results marked **preview** come from vCenter's stored averages (5-minute to 2-hour samples). Averages smooth out short peaks, so preview utilisation reads low. Treat preview recommendations as a first look.
 

@@ -126,6 +126,9 @@ type Model struct {
 	exName textinput.Model
 	excl   []analysis.Exclusion
 	exSel  int
+
+	srch   search
+	srchIn textinput.Model
 }
 
 func New(b ipc.Backend, opt Options) Model {
@@ -141,6 +144,7 @@ func New(b ipc.Backend, opt Options) Model {
 	m.exNote = input("e.g. vendor sizing guide requires 16 vCPU / 64 GB", false)
 	m.exNote.CharLimit = 500
 	m.exName = input("citrix-*", false)
+	m.srchIn = newSearchInput()
 	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(sAccent))
 	m.prog = progress.New(progress.WithSolidFill(string(accent.Dark)), progress.WithoutPercentage())
 	m.tbl = table.New(table.WithFocused(true))
@@ -524,6 +528,9 @@ func (m Model) add(fp string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.srch.prompt {
+		return m.keySearchPrompt(k)
+	}
 	key := k.String()
 	m.note = ""
 	id := m.cur
@@ -545,8 +552,27 @@ func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.src != nil {
 		ph = m.src.Phase
 	}
+	if m.tab == 1 {
+		switch key {
+		case "/", "?":
+			return m.openSearch(key == "?")
+		case "n", "N":
+			if m.srch.query != "" {
+				m.jump(m.tbl.Cursor(), m.srch.backward != (key == "N"))
+			}
+			return m, nil
+		case "esc":
+			if m.srch.query != "" {
+				m.srch = search{}
+				m.err = ""
+				m.fillTable()
+				return m, nil
+			}
+		}
+	}
 	switch key {
 	case "esc", "backspace", "h", "left":
+		m.srch = search{}
 		m.scr, m.cur, m.src = scrHome, "", nil
 		return m, m.fetch()
 	case "q":
@@ -693,9 +719,18 @@ func (m *Model) fillTable() {
 		m.tbl.SetRows(nil)
 		return
 	}
+	m.srch.matches = m.matchRows(m.srch.query)
+	hit := map[int]bool{}
+	for _, r := range m.srch.matches {
+		hit[r] = true
+	}
 	rows := make([]table.Row, 0, len(m.src.Result.Findings))
-	for _, f := range m.src.Result.Findings {
-		rows = append(rows, table.Row{f.Severity.String(), f.VM, string(f.Kind), f.Current + " → " + f.Suggested, f.Confidence})
+	for i, f := range m.src.Result.Findings {
+		vm := f.VM
+		if hit[i] {
+			vm = "» " + vm
+		}
+		rows = append(rows, table.Row{f.Severity.String(), vm, string(f.Kind), f.Current + " → " + f.Suggested, f.Confidence})
 	}
 	m.tbl.SetRows(rows)
 }

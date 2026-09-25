@@ -303,3 +303,73 @@ func TestRestartRequired(t *testing.T) {
 	}
 	view(t, m, "The appliance is restarting")
 }
+
+func TestFindingsSearch(t *testing.T) {
+	f := demo()
+	r := *f.src.Result
+	r.Findings = []analysis.Finding{
+		{VM: "web-01", Kind: analysis.CPUOver, Severity: analysis.High, Current: "8 vCPU", Suggested: "2 vCPU"},
+		{VM: "sql-01", Kind: analysis.MemOver, Severity: analysis.High, Current: "64 GB", Suggested: "24 GB"},
+		{VM: "web-02", Kind: analysis.CPUOver, Severity: analysis.Medium, Current: "4 vCPU", Suggested: "2 vCPU"},
+		{VM: "SQL-02", Kind: analysis.Idle, Severity: analysis.Low, Current: "2 vCPU / 8 GB", Suggested: "Decommission"},
+	}
+	f.src.Result = &r
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), tea.KeyMsg{Type: tea.KeyEnter})
+	m = send(t, m, m.fetch()(), keys1("2"))
+
+	// incremental: the cursor follows while typing, esc restores it
+	m = send(t, m, keys1("/"), keys1("s"), keys1("q"))
+	if m.tbl.Cursor() != 1 {
+		t.Fatalf("incremental search must preview the first match, cursor %d", m.tbl.Cursor())
+	}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.tbl.Cursor() != 0 || m.srch.query != "" {
+		t.Fatal("esc must cancel and restore the cursor")
+	}
+
+	// smartcase: lowercase matches both sql-01 and SQL-02
+	m = send(t, m, keys1("/"), keys1("sql"), tea.KeyMsg{Type: tea.KeyEnter})
+	if m.tbl.Cursor() != 1 || len(m.srch.matches) != 2 {
+		t.Fatalf("want 2 matches starting at row 1, got cursor %d matches %v", m.tbl.Cursor(), m.srch.matches)
+	}
+	view(t, m, "/sql", "1/2", "» sql-01")
+	m = send(t, m, keys1("n"))
+	if m.tbl.Cursor() != 3 {
+		t.Fatalf("n must go to the next match, cursor %d", m.tbl.Cursor())
+	}
+	m = send(t, m, keys1("n"))
+	if m.tbl.Cursor() != 1 || !strings.Contains(m.note, "BOTTOM") {
+		t.Fatalf("n must wrap with a note, cursor %d note %q", m.tbl.Cursor(), m.note)
+	}
+	m = send(t, m, keys1("N"))
+	if m.tbl.Cursor() != 3 {
+		t.Fatalf("N must go backwards, cursor %d", m.tbl.Cursor())
+	}
+
+	// uppercase in the pattern makes it case-sensitive
+	m = send(t, m, keys1("/"), keys1("SQL"), tea.KeyMsg{Type: tea.KeyEnter})
+	if len(m.srch.matches) != 1 || m.tbl.Cursor() != 3 {
+		t.Fatalf("smartcase: SQL must only match SQL-02, got %v", m.srch.matches)
+	}
+
+	// ? searches backwards; no match reports like vim
+	m = send(t, m, keys1("?"), keys1("web"), tea.KeyMsg{Type: tea.KeyEnter})
+	if m.tbl.Cursor() != 2 {
+		t.Fatalf("? must find the previous match, cursor %d", m.tbl.Cursor())
+	}
+	m = send(t, m, keys1("/"), keys1("oracle"), tea.KeyMsg{Type: tea.KeyEnter})
+	view(t, m, "Pattern not found: oracle")
+
+	// the search survives the periodic refresh, esc clears it, next esc leaves
+	m = send(t, m, keys1("/"), keys1("web"), tea.KeyMsg{Type: tea.KeyEnter}, m.fetch()())
+	view(t, m, "» web-01", "» web-02")
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.scr != scrSource || m.srch.query != "" {
+		t.Fatal("first esc must clear the search and stay on the findings")
+	}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.scr != scrHome {
+		t.Fatal("second esc must go back")
+	}
+}

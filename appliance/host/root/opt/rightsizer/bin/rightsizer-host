@@ -96,6 +96,7 @@ network() {
 	if [ -n "$tz" ] && valid '^[A-Za-z0-9/_+-]+$' "$tz" && [ -e "/usr/share/zoneinfo/$tz" ]; then
 		ln -sfn "../usr/share/zoneinfo/$tz" /etc/localtime
 	fi
+	guest_info
 }
 
 # admin_password applies the vApp password on first boot, and again only when
@@ -116,6 +117,32 @@ admin_password() {
 	chmod 0600 "$DATA/bootstrap/admin-password"
 	echo "$seen" >"$STATE/admin-password.applied"
 	log "administrator password from vApp options will be applied"
+}
+
+# guest_info sets what VMware Tools reports to vCenter as the guest OS:
+# the appliance name and versions, with the short name matching the VM's
+# configured guest type so vCenter shows no mismatch.
+guest_info() {
+	local f=/etc/rightsizer/vmware-tools.conf tag os tmp
+	tag="$(sed -n 's/^IMAGE=.*:\([0-9A-Za-z._-]*\)$/\1/p' "$ENV_FILE" 2>/dev/null | head -n1)"
+	os="$(sed -n 's/^VERSION=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -n1)"
+	valid '^[0-9A-Za-z._-]+$' "$tag" || tag="unknown"
+	valid '^[0-9A-Za-z._-]+$' "$os" || os=""
+	install -d -m 0755 /etc/rightsizer
+	tmp="$(mktemp)"
+	{
+		echo "# Managed by rightsizer-host."
+		echo "[guestosinfo]"
+		echo "short-name=other4xlinux-64"
+		echo "long-name=rightsizer appliance v${tag#v} (Flatcar Container Linux ${os:-})"
+	} >"$tmp"
+	if [ "${1:-}" != "force" ] && cmp -s "$tmp" "$f"; then
+		rm -f "$tmp"
+		return 0
+	fi
+	chmod 0644 "$tmp"
+	mv -f "$tmp" "$f"
+	systemctl try-restart vmtoolsd.service 2>/dev/null || true
 }
 
 image() {
@@ -161,12 +188,13 @@ prepare() {
 	admin_password
 	load_bundle
 	install_console
+	guest_info
 }
 
 UNIT='^[a-z0-9@.-]+\.(service|socket|path|timer|target)$'
 OWN_UNIT='^rightsizer[a-z0-9-]*\.(service|path|timer)$'
 KARG='^-?[A-Za-z0-9._=,-]+$'
-HOST_PATHS='^/(opt/rightsizer/bin/[a-z0-9-]+|etc/systemd/system/rightsizer[a-z0-9-]*\.(service|path|timer)|etc/sysctl\.d/90-rightsizer\.conf|etc/systemd/logind\.conf\.d/10-rightsizer\.conf|etc/docker/daemon\.json|etc/flatcar/update\.conf)$'
+HOST_PATHS='^/(opt/rightsizer/bin/[a-z0-9-]+|etc/systemd/system/rightsizer[a-z0-9-]*\.(service|path|timer)|etc/systemd/system/vmtoolsd\.service\.d/10-rightsizer\.conf|etc/sysctl\.d/90-rightsizer\.conf|etc/systemd/logind\.conf\.d/10-rightsizer\.conf|etc/docker/daemon\.json|etc/flatcar/update\.conf)$'
 PREVIOUS=$STATE/host-previous
 
 # replace installs a file atomically: a running copy of this script keeps
@@ -319,6 +347,7 @@ apply() {
 		case "$a" in
 		*/sysctl.d/*) sysctl --system >/dev/null || true ;;
 		*/flatcar/update.conf) systemctl try-restart update-engine.service locksmithd.service 2>/dev/null || true ;;
+		*/vmtoolsd.service.d/*) guest_info force ;;
 		*/docker/daemon.json) reasons+=("Docker settings changed") ;;
 		*/logind.conf.d/*) reasons+=("console settings changed") ;;
 		esac
