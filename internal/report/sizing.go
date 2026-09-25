@@ -142,8 +142,11 @@ func (s *sizingDoc) cover() {
 	st := sz.Storage
 	perf := "Storage performance data is not available yet."
 	if io := st.IO; io.Available {
-		perf = fmt.Sprintf("Storage load at p%.0f: %s IOPS (%.0f%% reads, peak %s) and %.0f MB/s (peak %.0f MB/s), average I/O size %.0f KB.",
-			sz.Percentile, Num(io.IOPS), io.ReadPct, Num(io.IOPSPeak), io.MBps, io.MBpsPeak, io.IOSizeKB)
+		perf = fmt.Sprintf("Storage load at p%.0f: %s IOPS (%.0f%% reads, peak %s)", sz.Percentile, Num(io.IOPS), io.ReadPct, Num(io.IOPSPeak))
+		if io.Throughput {
+			perf += fmt.Sprintf(" and %.0f MB/s (peak %.0f MB/s), average I/O size %.0f KB", io.MBps, io.MBpsPeak, io.IOSizeKB)
+		}
+		perf += "."
 	}
 	s.para(fmt.Sprintf("The VMs store %s of data (raw used, before any data reduction on the new storage); with growth and %g%% free space, plan %s of usable capacity before data reduction. %s",
 		tb(st.RawUsed), p.FreeSpace, tb(st.Plan), perf))
@@ -427,21 +430,25 @@ func (s *sizingDoc) storagePerf() {
 	}
 	s.h2("Performance")
 	if !io.Available {
-		s.para("No datastore performance data yet. rightsizer reads the 20-second datastore counters of every host from the first poll; vCenter keeps them in its history only at a higher statistics level.")
+		s.para("No datastore performance data yet. rightsizer reads the 20-second datastore counters of every host from the first poll; whether vCenter's history holds them depends on its statistics level.")
 		return
 	}
 	pc := fmt.Sprintf("p%.0f", sz.Percentile)
 	rows := [][]string{
 		{"IOPS", Num(io.IOPS), Num(io.IOPSPeak), Num(io.IOPSAvg)},
-		{"Throughput", fmt.Sprintf("%.0f MB/s", io.MBps), fmt.Sprintf("%.0f MB/s", io.MBpsPeak), "-"},
-		{"Latency", fmt.Sprintf("%.1f ms", io.LatencyMs), "-", "-"},
+		{"Throughput", ifs(io.Throughput, fmt.Sprintf("%.0f MB/s", io.MBps), "-"), ifs(io.Throughput, fmt.Sprintf("%.0f MB/s", io.MBpsPeak), "-"), "-"},
+		{"Latency", ifs(io.Latency, fmt.Sprintf("%.1f ms", io.LatencyMs), "-"), "-", "-"},
 	}
 	s.table([]col{{"", 50, "L"}, {pc, 40, "R"}, {"Peak", 40, "R"}, {"Average", 40, "R"}}, rows)
 	src := "20-second samples"
 	if io.Preview {
 		src = "vCenter history (averages smooth out peaks)"
 	}
-	s.para(fmt.Sprintf("Reads are %.0f%% of I/O operations; the average transfer is %.0f KB. All hosts summed at each sample, from %s over %.0f hours.", io.ReadPct, io.IOSizeKB, src, io.Hours))
+	size := "throughput and transfer size are not in the data read so far"
+	if io.Throughput {
+		size = fmt.Sprintf("the average transfer is %.0f KB", io.IOSizeKB)
+	}
+	s.para(fmt.Sprintf("Reads are %.0f%% of I/O operations; %s. All hosts summed at each sample, from %s over %.0f hours.", io.ReadPct, size, src, io.Hours))
 	if len(io.Points) > 1 {
 		if s.GetY() > 225 {
 			s.AddPage()
@@ -518,7 +525,13 @@ func (s *sizingDoc) datastoreTable() {
 		}
 		iops, mbps, lat := "-", "-", "-"
 		if d.IO.Available {
-			iops, mbps, lat = Num(d.IO.IOPS), fmt.Sprintf("%.0f", d.IO.MBps), fmt.Sprintf("%.1f", d.IO.LatencyMs)
+			iops = Num(d.IO.IOPS)
+			if d.IO.Throughput {
+				mbps = fmt.Sprintf("%.0f", d.IO.MBps)
+			}
+			if d.IO.Latency {
+				lat = fmt.Sprintf("%.1f", d.IO.LatencyMs)
+			}
 		}
 		rows = append(rows, []string{d.Name, d.Version, dashS(backing), tb(d.Capacity), tb(d.Used), tb(d.Provisioned), iops, mbps, lat})
 	}

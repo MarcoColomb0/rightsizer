@@ -70,6 +70,10 @@ type IOStats struct {
 	Write   Stat
 	ReadKB  Stat
 	WriteKB Stat
+	// SizeKB and SizeOps add up samples that reported both throughput and
+	// operations, for the average transfer size.
+	SizeKB  float64
+	SizeOps float64
 	Points  []IOPoint
 	acc     map[time.Time]*ioPointAcc
 }
@@ -85,23 +89,31 @@ type ioPointAcc struct {
 	n          int
 }
 
+// ioSample sums one timestamp. vCenter's history may keep some datastore
+// counters and not others, depending on its statistics level, so each kind
+// is recorded only when reported.
 type ioSample struct {
 	r, w, rkb, wkb float64
 	// latW is latency weighted by IOPS, divided by latIO when recorded.
 	latW, latIO float64
-	ok          bool
+	ops, kb     bool
 }
 
+func (a *ioSample) ok() bool { return a.ops || a.kb }
+
 func (a *ioSample) add(s vc.Series, inst string, i int) {
-	at := func(m string) float64 {
+	at := func(m string, seen *bool) float64 {
 		if v := s.Inst[m][inst]; i < len(v) && v[i] >= 0 {
-			a.ok = true
+			if seen != nil {
+				*seen = true
+			}
 			return v[i]
 		}
 		return -1
 	}
-	r, w, rkb, wkb := at(vc.ReadIOPS), at(vc.WriteIOPS), at(vc.ReadKBps), at(vc.WriteKBps)
-	rl, wl := at(vc.ReadLat), at(vc.WriteLat)
+	r, w := at(vc.ReadIOPS, &a.ops), at(vc.WriteIOPS, &a.ops)
+	rkb, wkb := at(vc.ReadKBps, &a.kb), at(vc.WriteKBps, &a.kb)
+	rl, wl := at(vc.ReadLat, nil), at(vc.WriteLat, nil)
 	a.r += max(r, 0)
 	a.w += max(w, 0)
 	a.rkb += max(rkb, 0)
@@ -119,15 +131,23 @@ func (a *ioSample) add(s vc.Series, inst string, i int) {
 // add records one summed sample; the 5-minute timeline is kept only when
 // points is set, for the all-datastores total.
 func (st *IOStats) add(a *ioSample, t time.Time, w uint64, points bool) {
-	st.IOPS.AddN(a.r+a.w, w)
-	st.KBps.AddN(a.rkb+a.wkb, w)
+	if a.ops {
+		st.IOPS.AddN(a.r+a.w, w)
+		st.Read.AddN(a.r, w)
+		st.Write.AddN(a.w, w)
+	}
+	if a.kb {
+		st.KBps.AddN(a.rkb+a.wkb, w)
+		st.ReadKB.AddN(a.rkb, w)
+		st.WriteKB.AddN(a.wkb, w)
+	}
+	if a.ops && a.kb {
+		st.SizeKB += (a.rkb + a.wkb) * float64(w)
+		st.SizeOps += (a.r + a.w) * float64(w)
+	}
 	if a.latIO > 0 {
 		st.Latency.AddN(a.latW/a.latIO, w)
 	}
-	st.Read.AddN(a.r, w)
-	st.Write.AddN(a.w, w)
-	st.ReadKB.AddN(a.rkb, w)
-	st.WriteKB.AddN(a.wkb, w)
 	if !points {
 		return
 	}
@@ -166,10 +186,10 @@ func (st *IOStats) ReadShare() float64 {
 	return 0
 }
 
-// IOSize is the average transfer size in KB.
+// IOSize is the average transfer size in KB, 0 when unknown.
 func (st *IOStats) IOSize() float64 {
-	if n := st.Read.Sum + st.Write.Sum; n > 0 {
-		return (st.ReadKB.Sum + st.WriteKB.Sum) / n
+	if st.SizeOps > 0 {
+		return st.SizeKB / st.SizeOps
 	}
 	return 0
 }

@@ -66,6 +66,8 @@ func demoSizing() *analysis.Sizing {
 		tot.Write.AddN(iops*0.3, 15)
 		tot.ReadKB.AddN(iops*0.7*20, 15)
 		tot.WriteKB.AddN(iops*0.3*32, 15)
+		tot.SizeKB += iops * 24 * 15
+		tot.SizeOps += iops * 15
 		tot.Points = append(tot.Points, analysis.IOPoint{T: t, IOPS: iops, KBps: iops * 24})
 		st.IO["ds0"].IOPS.AddN(iops/2, 15)
 		st.IO["ds0"].KBps.AddN(iops*12, 15)

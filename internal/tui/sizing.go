@@ -301,8 +301,16 @@ func (m Model) sizingView() string {
 		if io.Preview {
 			src = " (vCenter history)"
 		}
-		b.WriteString(fmt.Sprintf("  IOPS p%.0f %s  %s\n", sz.Percentile, sAccent.Render(report.Num(io.IOPS)),
-			sMuted.Render(fmt.Sprintf("%.0f%% reads, peak %s · %.0f MB/s, peak %.0f · %.0f KB per I/O · %.1f ms%s", io.ReadPct, report.Num(io.IOPSPeak), io.MBps, io.MBpsPeak, io.IOSizeKB, io.LatencyMs, src))))
+		parts := []string{fmt.Sprintf("%.0f%% reads, peak %s", io.ReadPct, report.Num(io.IOPSPeak))}
+		if io.Throughput {
+			parts = append(parts, fmt.Sprintf("%.0f MB/s, peak %.0f", io.MBps, io.MBpsPeak), fmt.Sprintf("%.0f KB per I/O", io.IOSizeKB))
+		} else {
+			parts = append(parts, "no throughput in the data yet")
+		}
+		if io.Latency {
+			parts = append(parts, fmt.Sprintf("%.1f ms", io.LatencyMs))
+		}
+		b.WriteString(fmt.Sprintf("  IOPS p%.0f %s  %s\n", sz.Percentile, sAccent.Render(report.Num(io.IOPS)), sMuted.Render(strings.Join(parts, " · ")+src)))
 	} else {
 		b.WriteString(sMuted.Render("  Storage performance: waiting for the first samples.") + "\n")
 	}

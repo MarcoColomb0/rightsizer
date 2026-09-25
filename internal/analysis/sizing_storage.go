@@ -51,17 +51,21 @@ type TypeUsage struct {
 
 type IOSummary struct {
 	Available bool
-	Preview   bool
-	Hours     float64
-	IOPS      float64
-	IOPSPeak  float64
-	IOPSAvg   float64
-	ReadPct   float64
-	MBps      float64
-	MBpsPeak  float64
-	IOSizeKB  float64
-	LatencyMs float64
-	Points    []IOPoint
+	// Throughput is false when only operations were reported, as in a
+	// vCenter history that does not keep the throughput counters.
+	Throughput bool
+	Latency    bool
+	Preview    bool
+	Hours      float64
+	IOPS       float64
+	IOPSPeak   float64
+	IOPSAvg    float64
+	ReadPct    float64
+	MBps       float64
+	MBpsPeak   float64
+	IOSizeKB   float64
+	LatencyMs  float64
+	Points     []IOPoint
 }
 
 type DatastoreSizing struct {
@@ -125,16 +129,18 @@ func ioSummary(st *IOStats, pct float64) IOSummary {
 		return IOSummary{}
 	}
 	return IOSummary{
-		Available: true,
-		Hours:     float64(st.IOPS.N) * 20 / 3600,
-		IOPS:      st.IOPS.Pct(pct),
-		IOPSPeak:  st.IOPS.Max,
-		IOPSAvg:   st.IOPS.Avg(),
-		ReadPct:   st.ReadShare() * 100,
-		MBps:      st.KBps.Pct(pct) / 1024,
-		MBpsPeak:  st.KBps.Max / 1024,
-		IOSizeKB:  st.IOSize(),
-		LatencyMs: st.Latency.Pct(pct),
+		Available:  true,
+		Throughput: st.KBps.N > 0,
+		Latency:    st.Latency.N > 0,
+		Hours:      float64(st.IOPS.N) * 20 / 3600,
+		IOPS:       st.IOPS.Pct(pct),
+		IOPSPeak:   st.IOPS.Max,
+		IOPSAvg:    st.IOPS.Avg(),
+		ReadPct:    st.ReadShare() * 100,
+		MBps:       st.KBps.Pct(pct) / 1024,
+		MBpsPeak:   st.KBps.Max / 1024,
+		IOSizeKB:   st.IOSize(),
+		LatencyMs:  st.Latency.Pct(pct),
 	}
 }
 
@@ -474,7 +480,9 @@ func notes(sz *Sizing, inv *vc.Inventory, est *vc.Estate) []string {
 		add("Hosts run %d different ESXi builds. Check the compatibility guide for the new servers, adapters and the ESXi version you will deploy.", len(versions))
 	}
 	if !st.IO.Available {
-		add("No storage performance data yet: datastore IOPS, throughput and latency are read every 5 minutes from the first sample on. vCenter keeps them in its history only at a higher statistics level.")
+		add("No storage performance data yet: datastore IOPS, throughput and latency are read every 5 minutes from the first sample on. Whether vCenter's history holds them depends on its statistics level.")
+	} else if !st.IO.Throughput {
+		add("Storage throughput is not available yet: the vCenter history read so far keeps datastore operations but not throughput at its statistics level. Throughput and I/O size appear with the 20-second data.")
 	}
 	return out
 }

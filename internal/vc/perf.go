@@ -34,9 +34,9 @@ const (
 var (
 	VMMetrics   = []string{CPUUsage, CPUReady, CPUCoStop, CPUMHz, MemUsage, MemConsume, DiskUsage, NetUsage, ReadIOPS, WriteIOPS}
 	HostMetrics = []string{CPUMHz, MemConsume, NetUsage, ReadIOPS, WriteIOPS, ReadKBps, WriteKBps, ReadLat, WriteLat}
-	// HistoryVMMetrics are the counters vCenter keeps in its historical
-	// rollups at the default statistics level; the datastore ones are read
-	// when a higher level keeps them.
+	// HistoryVMMetrics are read from vCenter's historical rollups. The CPU
+	// and memory ones are kept at every statistics level; the datastore
+	// ones only at some, and are skipped when missing.
 	HistoryVMMetrics = []string{CPUUsage, CPUReady, CPUMHz, MemUsage, MemConsume, DiskUsage, NetUsage, ReadIOPS, WriteIOPS}
 	optional         = map[string]bool{CPUCoStop: true, ReadIOPS: true, WriteIOPS: true, ReadKBps: true, WriteKBps: true, ReadLat: true, WriteLat: true}
 	// perDatastore counters are reported once per datastore instance.

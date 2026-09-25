@@ -80,6 +80,15 @@ func f1(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
 func itoa(v int) string   { return strconv.Itoa(v) }
 func i64(v int64) string  { return strconv.FormatInt(v, 10) }
 func yes(b bool) string   { return strconv.FormatBool(b) }
+
+// known leaves a cell empty when vCenter did not report the value.
+func known(ok bool, v float64) string {
+	if !ok {
+		return ""
+	}
+	return f1(v)
+}
+
 func day(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -155,7 +164,7 @@ func sizingTables(sz *analysis.Sizing) []csvTable {
 			luns = append(luns, strings.Join([]string{l.Name, l.Vendor, l.Model, gib(l.Capacity) + " GiB", l.Transport, itoa(l.Paths) + " paths", l.Policy}, " / "))
 		}
 		ds.rows = append(ds.rows, []string{d.Name, d.Version, d.Protocol, gib(d.Capacity), gib(d.Used), gib(d.Free), gib(d.Provisioned), itoa(d.VMs), itoa(len(d.Hosts)), yes(d.Local), yes(d.SSD),
-			d.Remote, strings.Join(luns, "; "), f1(d.IO.IOPS), f1(d.IO.IOPSPeak), f1(d.IO.ReadPct), f1(d.IO.MBps), f1(d.IO.LatencyMs)})
+			d.Remote, strings.Join(luns, "; "), f1(d.IO.IOPS), f1(d.IO.IOPSPeak), f1(d.IO.ReadPct), known(d.IO.Throughput, d.IO.MBps), known(d.IO.Latency, d.IO.LatencyMs)})
 	}
 
 	wl := csvTable{name: "workloads.csv", head: []string{"workload", "vms", "vms_on", "vcpu", "memory_mib", "recommended_vcpu", "recommended_memory_mib", "raw_used_gib", "provisioned_gib", "guest_used_gib", "iops_avg"}}

@@ -291,3 +291,20 @@ func TestSizingUnsized(t *testing.T) {
 		t.Fatalf("want a Groups error, got %v", err)
 	}
 }
+
+func TestIOWithoutThroughput(t *testing.T) {
+	start := time.Now().Add(-2 * time.Hour).Truncate(5 * time.Minute)
+	ts := []time.Time{start.Add(5 * time.Minute), start.Add(10 * time.Minute)}
+	st := NewStore(start)
+	// History at a statistics level that keeps operations and latency only.
+	h := ioSeries("h1", ts, map[string]map[string]float64{vc.ReadIOPS: {"a": 300}, vc.WriteIOPS: {"a": 100}, vc.ReadLat: {"a": 2}, vc.WriteLat: {"a": 2}}, 0)
+	h.Interval = 300
+	st.AddHosts([]vc.Series{h}, map[string]string{"h1": "cl"}, map[string]clusterCap{"cl": {MHz: 1000, MemB: 1 << 30}})
+	sum := ioSummary(st.IO[""], 95)
+	if !sum.Available || sum.Throughput || sum.IOSizeKB != 0 || !sum.Latency || sum.IOPS < 395 {
+		t.Fatalf("missing throughput must not read as zero: %+v", sum)
+	}
+	if st.Clusters["cl"].KBps.N != 0 || st.Clusters["cl"].IOPS.N == 0 {
+		t.Fatal("cluster throughput must stay empty when not reported")
+	}
+}

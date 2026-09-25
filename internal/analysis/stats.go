@@ -130,6 +130,7 @@ type bucket struct {
 	cpu, mem        float64
 	net, iops, kbps float64
 	hasNet, hasIO   bool
+	hasKB           bool
 	n               int
 }
 
@@ -302,10 +303,13 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 				ioAt(inst, ts).add(s, inst, i)
 				ioAt("", ts).add(s, inst, i)
 			}
-			if host.ok {
+			if host.ops {
 				b.iops += host.r + host.w
-				b.kbps += host.rkb + host.wkb
 				b.hasIO = true
+			}
+			if host.kb {
+				b.kbps += host.rkb + host.wkb
+				b.hasKB = true
 			}
 			st.HostLast[s.Ref] = ts
 		}
@@ -314,7 +318,7 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 		st.IO = map[string]*IOStats{}
 	}
 	for k, a := range io {
-		if !a.ok {
+		if !a.ok() {
 			continue
 		}
 		d := st.IO[k.cl]
@@ -344,6 +348,8 @@ func (st *Store) AddHosts(series []vc.Series, hostCluster map[string]string, cap
 		}
 		if b.hasIO {
 			cs.IOPS.AddN(b.iops, w)
+		}
+		if b.hasKB {
 			cs.KBps.AddN(b.kbps, w)
 		}
 		if cs.acc == nil {

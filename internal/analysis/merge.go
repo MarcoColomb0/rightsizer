@@ -182,6 +182,8 @@ func MergeSizing(ss []*Sizing) *Sizing {
 		if io := b.IO; io.Available {
 			m := &o.IO
 			m.Available = true
+			m.Throughput = m.Throughput || io.Throughput
+			m.Latency = m.Latency || io.Latency
 			m.Preview = m.Preview || io.Preview
 			if m.Hours == 0 || io.Hours < m.Hours {
 				m.Hours = io.Hours
