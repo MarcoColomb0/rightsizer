@@ -273,10 +273,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		return m.done(msg)
 	case sizingMsg:
-		m.szAt = time.Now()
 		if msg.id != m.cur {
 			return m, nil
 		}
+		m.szAt = time.Now()
 		m.szID, m.szErr = msg.id, ""
 		if msg.err != nil {
 			m.sz, m.szErr = nil, msg.err.Error()
@@ -328,6 +328,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 	m.busy = ""
+	if msg.what == "unshare" {
+		// Stopping a share never leaves the current screen.
+		if msg.err != nil {
+			m.err = msg.err.Error()
+		}
+		return m, m.fetch()
+	}
 	if msg.err != nil {
 		m.err = msg.err.Error()
 		switch msg.what {
@@ -656,10 +663,16 @@ func (m Model) keySource(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return err
 		})
 	case "s":
-		for _, sh := range m.shares(id) {
+		if shares := m.shares(id); len(shares) > 0 {
 			b := m.b
-			shID := sh.ID
-			return m, func() tea.Msg { return doneMsg{"unshare", id, b.StopShare(shID)} }
+			return m, func() tea.Msg {
+				for _, sh := range shares {
+					if err := b.StopShare(sh.ID); err != nil {
+						return doneMsg{"unshare", id, err}
+					}
+				}
+				return doneMsg{"unshare", id, nil}
+			}
 		}
 	case "f":
 		if ph == engine.Running || ph == engine.NeedPassword {

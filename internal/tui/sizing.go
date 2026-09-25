@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -43,6 +44,10 @@ const (
 	soSave
 	soCount
 )
+
+// paramField maps a SizingParams field to its form field.
+var paramField = map[string]int{"Basis": soBasis, "PoweredOff": soOff, "Growth": soGrowth, "Ratio": soRatio, "CPUTarget": soCPU,
+	"MemTarget": soMem, "Spares": soSpares, "Sockets": soSockets, "Uplift": soUplift, "FreeSpace": soFree, "Groups": soGroups}
 
 var szInput = map[int]int{soGrowth: 0, soRatio: 1, soCPU: 2, soMem: 3, soSpares: 4, soUplift: 5, soFree: 6, soGroups: 7}
 
@@ -167,11 +172,11 @@ func (m Model) readSizingForm() (analysis.SizingParams, int, error) {
 	p.Groups = strings.TrimSpace(m.szIn[szInput[soGroups]].Value())
 	if err := p.Validate(); err != nil {
 		field := soSave
-		switch {
-		case strings.Contains(err.Error(), "workload"):
-			field = soGroups
-		case strings.Contains(err.Error(), "spares"):
-			field = soSpares
+		var pe *analysis.ParamError
+		if errors.As(err, &pe) {
+			if f, ok := paramField[pe.Field]; ok {
+				field = f
+			}
 		}
 		return p, field, err
 	}
@@ -223,13 +228,6 @@ func (m Model) viewSizingOpts() string {
 	return b.String()
 }
 
-func basisName(b string) string {
-	if b == analysis.BasisRightsized {
-		return "rightsized"
-	}
-	return "as provisioned"
-}
-
 func (m Model) sizingView() string {
 	sz := m.sz
 	if sz == nil || m.szID != m.cur {
@@ -245,7 +243,7 @@ func (m Model) sizingView() string {
 		ratio = fmtNum(p.Ratio) + ":1"
 	}
 	b.WriteString(sMuted.Render(fmt.Sprintf("Sized %s · growth %s%% · vCPU/core %s · CPU ≤ %s%% · RAM ≤ %s%% · N+%d · %d-socket nodes",
-		basisName(p.Basis), fmtNum(p.Growth), ratio, fmtNum(p.CPUTarget), fmtNum(p.MemTarget), p.Spares, p.Sockets)) + "\n\n")
+		analysis.BasisLabel(p.Basis), fmtNum(p.Growth), ratio, fmtNum(p.CPUTarget), fmtNum(p.MemTarget), p.Spares, p.Sockets)) + "\n\n")
 
 	bi := 0
 	if p.Basis == analysis.BasisRightsized {
@@ -261,20 +259,23 @@ func (m Model) sizingView() string {
 		n := c.Needs[bi]
 		o, ok := n.Picked()
 		if !ok {
+			if n.Unsized() {
+				b.WriteString(fmt.Sprintf("  %-*s %s\n", w, clip(c.Name, w), sWarn.Render("no node shape fits; left out of the totals, see the notes")))
+			}
 			continue
 		}
 		b.WriteString(fmt.Sprintf("  %-*s %s  %s\n", w, clip(c.Name, w), sAccent.Render(o.String()), fmt.Sprintf("%d cores, today %d", o.TotalCores, c.Cores)))
 		b.WriteString(pad + sMuted.Render(fmt.Sprintf("CPU %.0f%% · RAM %.0f%% with spares out · %s", o.CPUUtil, o.MemUtil, n.Ports)) + "\n")
 	}
 	t := sz.Totals
-	nt, alt := t.For(p.Basis), t.For(otherBasis(p.Basis))
-	b.WriteString(fmt.Sprintf("  %-*s %s  %s\n", w, "Total", sBold.Render(fmt.Sprintf("%d nodes · %d cores · %s RAM", nt.Nodes, nt.Cores, gbTB(nt.MemGB))),
+	nt, alt := t.For(p.Basis), t.For(analysis.OtherBasis(p.Basis))
+	b.WriteString(fmt.Sprintf("  %-*s %s  %s\n", w, "Total", sBold.Render(fmt.Sprintf("%d nodes · %d cores · %s RAM", nt.Nodes, nt.Cores, analysis.GBLabel(nt.MemGB))),
 		sMuted.Render(fmt.Sprintf("today %d hosts · %d cores · %s", t.Hosts, t.Cores, analysis.Human(t.MemB)))))
 	other := "Rightsized"
 	if p.Basis == analysis.BasisRightsized {
 		other = "As provisioned"
 	}
-	b.WriteString(pad + sMuted.Render(fmt.Sprintf("%s instead: %d nodes · %d cores · %s RAM", other, alt.Nodes, alt.Cores, gbTB(alt.MemGB))) + "\n\n")
+	b.WriteString(pad + sMuted.Render(fmt.Sprintf("%s instead: %d nodes · %d cores · %s RAM", other, alt.Nodes, alt.Cores, analysis.GBLabel(alt.MemGB))) + "\n\n")
 
 	b.WriteString(sBold.Render("Compute today") + "\n")
 	for _, c := range sz.Clusters {
@@ -361,20 +362,6 @@ func (m Model) scrollSizing(d int) Model {
 	n := strings.Count(m.sizingView(), "\n") + 1
 	m.szScroll = min(max(m.szScroll+d, 0), max(n-6, 0))
 	return m
-}
-
-func otherBasis(b string) string {
-	if b == analysis.BasisRightsized {
-		return analysis.BasisProvisioned
-	}
-	return analysis.BasisRightsized
-}
-
-func gbTB(gb int) string {
-	if gb >= 1024 {
-		return fmt.Sprintf("%.1f TB", float64(gb)/1024)
-	}
-	return fmt.Sprintf("%d GB", gb)
 }
 
 func clip(s string, n int) string {

@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -261,5 +262,32 @@ func TestSizingStandaloneAndEmpty(t *testing.T) {
 	}
 	if _, err := json.Marshal(sz); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSizingUnsized(t *testing.T) {
+	in := sizingFixture()
+	in.Inv.VMs = append(in.Inv.VMs, vc.VM{Ref: "huge", Name: "hana-01", Cluster: "prod", PowerOn: true, VCPU: 300, MemMB: 6 << 20})
+	sz := Size(in)
+	n := sz.Clusters[0].Needs[0]
+	if !n.Unsized() || len(n.Options) != 0 {
+		t.Fatalf("a 300 vCPU VM fits no node: %+v", n)
+	}
+	if !strings.Contains(sz.Notes[0], "prod: no node shape fits") || !strings.Contains(sz.Notes[0], "300 vCPU") {
+		t.Fatalf("unsized cluster must lead the notes: %q", sz.Notes[0])
+	}
+	if nt := sz.Totals.For(BasisProvisioned); nt.Nodes != 0 {
+		t.Fatalf("totals %+v", nt)
+	}
+	var pe *ParamError
+	p := DefaultSizing()
+	p.CPUTarget = 150
+	if err := p.Validate(); !errors.As(err, &pe) || pe.Field != "CPUTarget" {
+		t.Fatalf("want a CPUTarget error, got %v", err)
+	}
+	p = DefaultSizing()
+	p.Groups = "x"
+	if err := p.Validate(); !errors.As(err, &pe) || pe.Field != "Groups" {
+		t.Fatalf("want a Groups error, got %v", err)
 	}
 }

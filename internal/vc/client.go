@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vmware/govmomi/property"
@@ -29,6 +30,11 @@ type Client struct {
 	sm    *session.Manager
 	creds Credentials
 	perf  *perfCounters
+
+	mu sync.Mutex
+	// noDS records statistics intervals whose per-datastore counters vCenter
+	// refused as too large even for a single entity.
+	noDS map[int32]bool
 }
 
 func Connect(ctx context.Context, c Credentials) (*Client, error) {

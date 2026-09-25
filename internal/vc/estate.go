@@ -139,13 +139,9 @@ func (c *Client) Estate(ctx context.Context) (*Estate, error) {
 	}
 	defer v.Destroy(context.WithoutCancel(ctx))
 
-	var crs []mo.ComputeResource
-	if err := v.Retrieve(ctx, []string{"ComputeResource"}, []string{"name"}, &crs); err != nil {
+	crName, err := computeResources(ctx, v)
+	if err != nil {
 		return nil, err
-	}
-	crName := map[string]string{}
-	for _, cr := range crs {
-		crName[cr.Self.Value] = cr.Name
 	}
 	var ccs []mo.ClusterComputeResource
 	if err := v.Retrieve(ctx, []string{"ClusterComputeResource"}, []string{"name", "configurationEx", "summary", "host"}, &ccs); err != nil {
@@ -174,14 +170,7 @@ func (c *Client) Estate(ctx context.Context) (*Estate, error) {
 	hostName := map[string]string{}
 	luns := map[string]LUN{}
 	for _, h := range hs {
-		cl := ""
-		if h.Parent != nil {
-			cl = crName[h.Parent.Value]
-			if h.Parent.Type == "ComputeResource" {
-				cl = "standalone/" + cl
-			}
-		}
-		hd, hl := convertHost(h, cl, targets)
+		hd, hl := convertHost(h, clusterOf(h.Parent, crName), targets)
 		hostName[h.Self.Value] = hd.Name
 		for k, l := range hl {
 			if _, ok := luns[k]; !ok {

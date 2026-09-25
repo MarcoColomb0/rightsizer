@@ -116,13 +116,9 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 	}
 	defer v.Destroy(context.WithoutCancel(ctx))
 
-	var crs []mo.ComputeResource
-	if err := v.Retrieve(ctx, []string{"ComputeResource"}, []string{"name"}, &crs); err != nil {
+	crName, err := computeResources(ctx, v)
+	if err != nil {
 		return nil, err
-	}
-	crName := map[string]string{}
-	for _, cr := range crs {
-		crName[cr.Self.Value] = cr.Name
 	}
 
 	var hs []mo.HostSystem
@@ -133,13 +129,7 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 	hostCluster := map[string]string{}
 	hostName := map[string]string{}
 	for _, h := range hs {
-		cl := ""
-		if h.Parent != nil {
-			cl = crName[h.Parent.Value]
-			if h.Parent.Type == "ComputeResource" {
-				cl = "standalone/" + cl
-			}
-		}
+		cl := clusterOf(h.Parent, crName)
 		host := Host{
 			Ref:         h.Self.Value,
 			Name:        h.Name,
@@ -186,6 +176,32 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 		inv.Datastores = append(inv.Datastores, ds)
 	}
 	return inv, nil
+}
+
+// computeResources maps clusters and standalone hosts' compute resources to
+// their names.
+func computeResources(ctx context.Context, v *view.ContainerView) (map[string]string, error) {
+	var crs []mo.ComputeResource
+	if err := v.Retrieve(ctx, []string{"ComputeResource"}, []string{"name"}, &crs); err != nil {
+		return nil, err
+	}
+	names := make(map[string]string, len(crs))
+	for _, cr := range crs {
+		names[cr.Self.Value] = cr.Name
+	}
+	return names, nil
+}
+
+// clusterOf names a host's cluster; hosts outside a cluster get
+// "standalone/<name>".
+func clusterOf(parent *types.ManagedObjectReference, names map[string]string) string {
+	if parent == nil {
+		return ""
+	}
+	if parent.Type == "ComputeResource" {
+		return "standalone/" + names[parent.Value]
+	}
+	return names[parent.Value]
 }
 
 func convertDisk(disk *types.VirtualDisk) Disk {

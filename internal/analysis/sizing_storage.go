@@ -332,6 +332,14 @@ func vmDevices(vm vc.VM) string {
 func notes(sz *Sizing, inv *vc.Inventory, est *vc.Estate) []string {
 	var out []string
 	add := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
+	for _, c := range sz.Clusters {
+		for _, n := range c.Needs {
+			if n.Basis == sz.Params.Basis && n.Unsized() {
+				add("%s: no node shape fits (up to %d × 128 cores and 4 TB per node, 64 nodes): its largest VMs have %d vCPU and %s of memory, and it needs %d cores and %s of RAM. It is left out of the node totals; size it separately.",
+					c.Name, sz.Params.Sockets, c.LargestCPU.VCPU, gib(c.LargestMem.MemMB), n.Cores, Human(int64(n.MemB)))
+			}
+		}
+	}
 
 	vendors := map[string]int{}
 	for _, h := range inv.Hosts {

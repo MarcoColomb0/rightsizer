@@ -84,6 +84,8 @@ func (s Series) Sum(name string, i int) float64 {
 }
 
 func (c *Client) counters(ctx context.Context) (*perfCounters, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.perf != nil {
 		return c.perf, nil
 	}
@@ -111,7 +113,7 @@ func (c *Client) counters(ctx context.Context) (*perfCounters, error) {
 // real-time data for about an hour, so callers must poll more often.
 func (c *Client) Sample(ctx context.Context, kind string, refs []string, metrics []string, since time.Time) ([]Series, error) {
 	w := Window{Interval: RealtimeInterval, Start: since}
-	return c.query(ctx, kind, refs, metrics, w, realtimeBatch)
+	return c.query(ctx, kind, refs, metrics, w)
 }
 
 // Window is a time range read at one statistics interval.
@@ -159,10 +161,14 @@ func (c *Client) HistoryPlan(ctx context.Context, back time.Duration) ([]Window,
 
 // History reads one window of rolled-up statistics.
 func (c *Client) History(ctx context.Context, kind string, refs []string, metrics []string, w Window) ([]Series, error) {
-	return c.query(ctx, kind, refs, metrics, w, max(1, historyMetricLimit/len(metrics)))
+	return c.query(ctx, kind, refs, metrics, w)
 }
 
-func (c *Client) query(ctx context.Context, kind string, refs []string, metrics []string, w Window, batch int) ([]Series, error) {
+// query reads the core counters, then the per-datastore ones on a separate,
+// best-effort request: those expand to one series per datastore and may
+// exceed what vCenter accepts in one query, which must never cost the CPU
+// and memory data.
+func (c *Client) query(ctx context.Context, kind string, refs []string, metrics []string, w Window) ([]Series, error) {
 	if err := c.Ensure(ctx); err != nil {
 		return nil, err
 	}
@@ -170,15 +176,61 @@ func (c *Client) query(ctx context.Context, kind string, refs []string, metrics 
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]types.PerfMetricId, 0, len(metrics))
+	var core, ds []types.PerfMetricId
 	for _, m := range metrics {
-		if id, ok := pc.byName[m]; ok {
-			inst := ""
-			if perDatastore[m] {
-				inst = "*"
-			}
-			ids = append(ids, types.PerfMetricId{CounterId: id, Instance: inst})
+		id, ok := pc.byName[m]
+		switch {
+		case !ok:
+		case perDatastore[m]:
+			ds = append(ds, types.PerfMetricId{CounterId: id, Instance: "*"})
+		default:
+			core = append(core, types.PerfMetricId{CounterId: id, Instance: ""})
 		}
+	}
+	batch := func(pairs int) int {
+		if w.Interval == RealtimeInterval {
+			return realtimeBatch
+		}
+		return max(1, historyMetricLimit/pairs)
+	}
+	out, err := c.run(ctx, kind, refs, core, w, batch(len(core)), pc)
+	if err != nil || len(ds) == 0 || c.skipDatastores(w.Interval) {
+		return out, err
+	}
+	// Assume about four datastores per entity to start; run halves the
+	// batch when vCenter still finds the query too large.
+	extra, err := c.run(ctx, kind, refs, ds, w, batch(len(ds)*4), pc)
+	switch {
+	case ctx.Err() != nil:
+		return out, ctx.Err()
+	case err != nil:
+		if tooLarge(err) {
+			c.noDatastores(w.Interval)
+		}
+		return out, nil
+	}
+	mergeInst(out, extra)
+	return out, nil
+}
+
+func (c *Client) skipDatastores(interval int32) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.noDS[interval]
+}
+
+func (c *Client) noDatastores(interval int32) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.noDS == nil {
+		c.noDS = map[int32]bool{}
+	}
+	c.noDS[interval] = true
+}
+
+func (c *Client) run(ctx context.Context, kind string, refs []string, ids []types.PerfMetricId, w Window, batch int, pc *perfCounters) ([]Series, error) {
+	if len(ids) == 0 {
+		return nil, nil
 	}
 	pm := performance.NewManager(c.vim)
 	var out []Series
@@ -221,6 +273,44 @@ func (c *Client) query(ctx context.Context, kind string, refs []string, metrics 
 		start = end
 	}
 	return out, nil
+}
+
+// mergeInst adds per-datastore series to the core series of the same
+// entity, aligned on their timestamps.
+func mergeInst(core, extra []Series) {
+	idx := map[string]int{}
+	for i, s := range core {
+		idx[s.Ref] = i
+	}
+	for _, e := range extra {
+		i, ok := idx[e.Ref]
+		if !ok || len(e.Inst) == 0 {
+			continue
+		}
+		c := &core[i]
+		pos := make(map[int64]int, len(e.TS))
+		for j, t := range e.TS {
+			pos[t.UnixNano()] = j
+		}
+		if c.Inst == nil {
+			c.Inst = map[string]map[string][]float64{}
+		}
+		for name, byInst := range e.Inst {
+			if c.Inst[name] == nil {
+				c.Inst[name] = map[string][]float64{}
+			}
+			for inst, v := range byInst {
+				aligned := make([]float64, len(c.TS))
+				for k, t := range c.TS {
+					aligned[k] = -1
+					if j, ok := pos[t.UnixNano()]; ok && j < len(v) {
+						aligned[k] = v[j]
+					}
+				}
+				c.Inst[name][inst] = aligned
+			}
+		}
+	}
 }
 
 func tooLarge(err error) bool {

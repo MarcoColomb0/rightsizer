@@ -12,7 +12,9 @@ import (
 
 	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/simulator"
+	"github.com/vmware/govmomi/vim25/methods"
 	"github.com/vmware/govmomi/vim25/mo"
+	"github.com/vmware/govmomi/vim25/soap"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
@@ -295,5 +297,76 @@ func TestDatastoreCounters(t *testing.T) {
 	}
 	if _, ok := ss[0].Values[ReadIOPS]; ok {
 		t.Fatal("per-datastore counter must not be reported as an aggregate")
+	}
+}
+
+// refuseWildcard fails performance queries for per-datastore counters the way
+// vCenter does when a query exceeds vpxd.stats.maxQueryMetrics.
+type refuseWildcard struct {
+	next  soap.RoundTripper
+	calls int
+}
+
+func (r *refuseWildcard) RoundTrip(ctx context.Context, req, res soap.HasFault) error {
+	if q, ok := req.(*methods.QueryPerfBody); ok {
+		for _, s := range q.Req.QuerySpec {
+			for _, id := range s.MetricId {
+				if id.Instance == "*" {
+					r.calls++
+					return errors.New("ServerFaultCode: Request exceeds vpxd.stats.maxQueryMetrics")
+				}
+			}
+		}
+	}
+	return r.next.RoundTrip(ctx, req, res)
+}
+
+func TestDatastoreCountersBestEffort(t *testing.T) {
+	creds, done := sim(t)
+	defer done()
+	ctx := context.Background()
+	c, err := Connect(ctx, creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(ctx)
+	inv, err := c.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hosts []string
+	for _, h := range inv.Hosts {
+		hosts = append(hosts, h.Ref)
+	}
+	rw := &refuseWildcard{next: c.vim.RoundTripper}
+	c.vim.RoundTripper = rw
+	ss, err := c.Sample(ctx, "HostSystem", hosts, HostMetrics, time.Time{})
+	if err != nil {
+		t.Fatalf("core counters must survive a refused datastore query: %v", err)
+	}
+	if len(ss) != len(hosts) || len(ss[0].Values[CPUMHz]) == 0 || len(ss[0].Inst) != 0 {
+		t.Fatalf("want core samples only, got %+v", ss[0])
+	}
+	first := rw.calls
+	if first == 0 || !c.skipDatastores(RealtimeInterval) {
+		t.Fatalf("refusal at one entity must disable the datastore query (%d calls)", first)
+	}
+	if _, err := c.Sample(ctx, "HostSystem", hosts, HostMetrics, time.Time{}); err != nil || rw.calls != first {
+		t.Fatalf("disabled datastore query retried: %d calls, %v", rw.calls, err)
+	}
+}
+
+func TestMergeInst(t *testing.T) {
+	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	ts := []time.Time{t0, t0.Add(20 * time.Second), t0.Add(40 * time.Second)}
+	core := []Series{{Ref: "h1", TS: ts, Values: map[string][]float64{CPUMHz: {1, 2, 3}}}, {Ref: "h2", TS: ts}}
+	extra := []Series{{Ref: "h1", TS: ts[1:], Inst: map[string]map[string][]float64{ReadIOPS: {"ds1": {10, 20}}}}, {Ref: "h3", TS: ts, Inst: map[string]map[string][]float64{ReadIOPS: {"x": {1, 1, 1}}}}}
+	mergeInst(core, extra)
+	got := core[0].Inst[ReadIOPS]["ds1"]
+	if len(got) != 3 || got[0] != -1 || got[1] != 10 || got[2] != 20 {
+		t.Fatalf("aligned %v", got)
+	}
+	if core[1].Inst != nil {
+		t.Fatal("entities without datastore data stay untouched")
 	}
 }

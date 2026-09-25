@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"path"
@@ -43,31 +42,71 @@ func DefaultSizing() SizingParams {
 	return SizingParams{Basis: BasisProvisioned, Growth: 20, CPUTarget: 70, MemTarget: 90, Spares: 1, Sockets: 2, FreeSpace: 20}
 }
 
+// ParamError names the sizing option that is invalid.
+type ParamError struct {
+	Field string
+	Msg   string
+}
+
+func (e *ParamError) Error() string { return e.Msg }
+
 func (p SizingParams) Validate() error {
+	bad := func(field, msg string) error { return &ParamError{field, msg} }
 	switch {
 	case p.Basis != BasisProvisioned && p.Basis != BasisRightsized:
-		return errors.New("basis must be provisioned or rightsized")
+		return bad("Basis", "basis must be provisioned or rightsized")
 	case p.Growth < 0 || p.Growth > 300:
-		return errors.New("growth must be between 0 and 300%")
+		return bad("Growth", "growth must be between 0 and 300%")
 	case p.Ratio != 0 && (p.Ratio < 1 || p.Ratio > 32):
-		return errors.New("vCPU per core must be 0 (automatic) or between 1 and 32")
+		return bad("Ratio", "vCPU per core must be 0 (automatic) or between 1 and 32")
 	case p.CPUTarget < 20 || p.CPUTarget > 100:
-		return errors.New("CPU target must be between 20 and 100%")
+		return bad("CPUTarget", "CPU target must be between 20 and 100%")
 	case p.MemTarget < 50 || p.MemTarget > 100:
-		return errors.New("memory target must be between 50 and 100%")
+		return bad("MemTarget", "memory target must be between 50 and 100%")
 	case p.Spares < 0 || p.Spares > 4:
-		return errors.New("HA spares must be between 0 and 4")
+		return bad("Spares", "HA spares must be between 0 and 4")
 	case p.Sockets < 1 || p.Sockets > 2:
-		return errors.New("sockets per node must be 1 or 2")
+		return bad("Sockets", "sockets per node must be 1 or 2")
 	case p.Uplift < 0 || p.Uplift > 200:
-		return errors.New("per-core uplift must be between 0 and 200%")
+		return bad("Uplift", "per-core uplift must be between 0 and 200%")
 	case p.FreeSpace < 0 || p.FreeSpace > 60:
-		return errors.New("free space must be between 0 and 60%")
+		return bad("FreeSpace", "free space must be between 0 and 60%")
 	case len(p.Groups) > 1000:
-		return errors.New("workload groups too long")
+		return bad("Groups", "workload groups too long")
 	}
-	_, err := parseGroups(p.Groups)
-	return err
+	if _, err := parseGroups(p.Groups); err != nil {
+		return bad("Groups", err.Error())
+	}
+	return nil
+}
+
+// BasisLabel describes a sizing basis in reports.
+func BasisLabel(b string) string {
+	if b == BasisRightsized {
+		return "rightsized"
+	}
+	return "as provisioned"
+}
+
+// OtherBasis is the basis compared with b.
+func OtherBasis(b string) string {
+	if b == BasisRightsized {
+		return BasisProvisioned
+	}
+	return BasisRightsized
+}
+
+// GBLabel shows node memory in GB, or TB from 1024 GB.
+func GBLabel(gb int) string {
+	if gb >= 1024 {
+		return fmt.Sprintf("%.1f TB", float64(gb)/1024)
+	}
+	return fmt.Sprintf("%d GB", gb)
+}
+
+// Unsized reports that a basis needs capacity but no node option fits.
+func (n Need) Unsized() bool {
+	return n.Pick < 0 && (n.Cores > 0 || n.MemB > 0)
 }
 
 type group struct {

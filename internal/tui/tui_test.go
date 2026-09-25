@@ -28,6 +28,7 @@ type fake struct {
 	sz       *analysis.Sizing
 	params   analysis.SizingParams
 	sized    []string
+	stopped  []string
 }
 
 func (f *fake) Sizing(string) (*analysis.Sizing, error) {
@@ -58,7 +59,7 @@ func (f *fake) Probe(string) (*vc.CertInfo, error)    { return &vc.CertInfo{Trus
 func (f *fake) Finish(string) error                   { return nil }
 func (f *fake) Remove(string) error                   { return nil }
 func (f *fake) Publish(string) (*report.Share, error) { return &report.Share{}, nil }
-func (f *fake) StopShare(string) error                { return nil }
+func (f *fake) StopShare(id string) error             { f.stopped = append(f.stopped, id); return nil }
 func (f *fake) Resume(id, pw string) error            { f.resumed = id + ":" + pw; return nil }
 func (f *fake) Add(c engine.Config, _ string) (string, error) {
 	f.added = c
@@ -463,4 +464,45 @@ func TestSizingTab(t *testing.T) {
 	if len(f.sized) != 2 || f.sized[1] != "" {
 		t.Fatalf("z must publish the combined sizing, got %v", f.sized)
 	}
+}
+
+func TestSizingFixes(t *testing.T) {
+	f := demo()
+	f.sum.Shares = []report.Share{{ID: "r1", Source: "aaaa0001", URL: "https://x/a/r.pdf"}, {ID: "z1", Source: "sizing:aaaa0001", URL: "https://x/b/s.pdf",
+		Extra: []report.Link{{Name: "s-data.zip", URL: "https://x/b/s-data.zip"}}}, {ID: "o1", Source: "bbbb0002"}}
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), tea.KeyMsg{Type: tea.KeyEnter})
+	m = send(t, m, m.fetch()())
+	view(t, m, "Sizing · vcsa01.corp.local", "s-data.zip", "spreadsheet data")
+	m = send(t, m, keys1("s"))
+	if strings.Join(f.stopped, ",") != "r1,z1" {
+		t.Fatalf("s must stop every share of the source and only those, stopped %v", f.stopped)
+	}
+	if m.scr != scrSource {
+		t.Fatalf("stopping shares must stay on the source, got screen %v", m.scr)
+	}
+
+	m = send(t, m, keys1("4"))
+	at := m.szAt
+	m = send(t, m, sizingMsg{id: "bbbb0002", err: errors.New("late")})
+	if m.szAt != at || m.szErr != "" {
+		t.Fatal("a reply for another source must be ignored")
+	}
+
+	m = send(t, m, keys1("o"))
+	for m.szf.focus != soCPU {
+		m = send(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyBackspace}, tea.KeyMsg{Type: tea.KeyBackspace}, keys1("150"))
+	for m.szf.focus != soSave {
+		m = send(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.szf.focus != soCPU || !strings.Contains(m.err, "CPU target") {
+		t.Fatalf("an out-of-range value must focus its field, focus %d err %q", m.szf.focus, m.err)
+	}
+
+	f.sz.Clusters[0].Needs[0] = analysis.Need{Basis: analysis.BasisProvisioned, Cores: 300, Pick: -1}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEsc}, keys1("4"))
+	view(t, m, "no node shape fits")
 }

@@ -34,13 +34,6 @@ func (s *sizingDoc) basis() int {
 	return 0
 }
 
-func basisLabel(b string) string {
-	if b == analysis.BasisRightsized {
-		return "rightsized"
-	}
-	return "as provisioned"
-}
-
 func (s *sizingDoc) kpi(x, y, w float64, label, value, sub string) {
 	s.fill(cBand)
 	s.Rect(x, y, w, 26, "F")
@@ -65,13 +58,6 @@ func (s *sizingDoc) kpi(x, y, w float64, label, value, sub string) {
 
 func tb(b int64) string { return analysis.Human(b) }
 
-func gbToTB(gb int) string {
-	if gb >= 1024 {
-		return fmt.Sprintf("%.1f TB", float64(gb)/1024)
-	}
-	return fmt.Sprintf("%d GB", gb)
-}
-
 func (s *sizingDoc) cover() {
 	sz, p := s.sz, s.sz.Params
 	s.AddPage()
@@ -83,7 +69,7 @@ func (s *sizingDoc) cover() {
 	s.CellFormat(content, 11, "Hardware Refresh Sizing", "", 1, "L", false, 0, "")
 	s.font("", 11)
 	s.color(cMuted)
-	s.CellFormat(content, 6, s.tr("Compute sized "+basisLabel(p.Basis)+", storage from raw used capacity"), "", 1, "L", false, 0, "")
+	s.CellFormat(content, 6, s.tr("Compute sized "+analysis.BasisLabel(p.Basis)+", storage from raw used capacity"), "", 1, "L", false, 0, "")
 	s.Ln(4)
 	window := "no performance data yet"
 	if !sz.Start.IsZero() {
@@ -121,7 +107,7 @@ func (s *sizingDoc) cover() {
 	y := s.GetY()
 	s.kpi(margin, y, w, "New nodes", fmt.Sprint(nt.Nodes), fmt.Sprintf("today %d hosts", t.Hosts))
 	s.kpi(margin+(w+4), y, w, "Physical cores", fmt.Sprintf("%d → %d", t.Cores, nt.Cores), pct(t.Cores, nt.Cores))
-	s.kpi(margin+2*(w+4), y, w, "RAM", fmt.Sprintf("%s → %s", tb(t.MemB), gbToTB(nt.MemGB)), pct(int(t.MemB>>30), nt.MemGB))
+	s.kpi(margin+2*(w+4), y, w, "RAM", fmt.Sprintf("%s → %s", tb(t.MemB), analysis.GBLabel(nt.MemGB)), pct(int(t.MemB>>30), nt.MemGB))
 	s.kpi(margin+3*(w+4), y, w, "Raw used storage", tb(sz.Storage.RawUsed), "plan "+tb(sz.Storage.Plan)+" usable")
 	s.SetY(y + 32)
 
@@ -131,9 +117,12 @@ func (s *sizingDoc) cover() {
 		n := c.Needs[s.basis()]
 		o, ok := n.Picked()
 		if !ok {
+			if n.Unsized() {
+				rows = append(rows, []string{c.Name, "-", "no node shape fits, see Before you order", "-", "-", "-"})
+			}
 			continue
 		}
-		rows = append(rows, []string{c.Name, fmt.Sprint(o.Nodes), o.Spec(), fmt.Sprint(o.TotalCores), gbToTB(o.Nodes * o.MemGB), n.Ports.String()})
+		rows = append(rows, []string{c.Name, fmt.Sprint(o.Nodes), o.Spec(), fmt.Sprint(o.TotalCores), analysis.GBLabel(o.Nodes * o.MemGB), n.Ports.String()})
 	}
 	if len(rows) == 0 {
 		s.para("No cluster with running VMs yet.")
@@ -145,11 +134,11 @@ func (s *sizingDoc) cover() {
 	}
 
 	s.h2("Summary")
-	alt := t.For(otherBasis(p.Basis))
+	alt := t.For(analysis.OtherBasis(p.Basis))
 	s.para(fmt.Sprintf("%d powered-on VMs (%d vCPU, %s configured) and %d powered-off VMs run on %d hosts with %d physical cores and %s of RAM. "+
 		"Sized %s with %g%% growth, they need %d nodes with %d cores and %s of RAM. Applying the rightsizing recommendations instead would need %d nodes with %d cores and %s.",
 		t.VMs, t.VCPU, analysis.GiB(t.MemMB), t.VMsOff, t.Hosts, t.Cores, tb(t.MemB),
-		basisLabel(p.Basis), p.Growth, nt.Nodes, nt.Cores, gbToTB(nt.MemGB), alt.Nodes, alt.Cores, gbToTB(alt.MemGB)))
+		analysis.BasisLabel(p.Basis), p.Growth, nt.Nodes, nt.Cores, analysis.GBLabel(nt.MemGB), alt.Nodes, alt.Cores, analysis.GBLabel(alt.MemGB)))
 	st := sz.Storage
 	perf := "Storage performance data is not available yet."
 	if io := st.IO; io.Available {
@@ -168,13 +157,6 @@ func (s *sizingDoc) cover() {
 		}
 		s.text(4.2, msg)
 	}
-}
-
-func otherBasis(b string) string {
-	if b == analysis.BasisRightsized {
-		return analysis.BasisProvisioned
-	}
-	return analysis.BasisRightsized
 }
 
 // Num formats a count with thousands separators.
@@ -231,7 +213,7 @@ func (s *sizingDoc) compute() {
 	rows = rows[:0]
 	for _, c := range sz.Clusters {
 		for _, n := range c.Needs {
-			rows = append(rows, []string{c.Name, basisLabel(n.Basis), fmt.Sprint(n.VCPU), analysis.GiB(n.MemMB), fmt.Sprintf("%g:1", n.Ratio),
+			rows = append(rows, []string{c.Name, analysis.BasisLabel(n.Basis), fmt.Sprint(n.VCPU), analysis.GiB(n.MemMB), fmt.Sprintf("%g:1", n.Ratio),
 				fmt.Sprint(n.CoresByRatio), fmt.Sprint(n.CoresByDemand), fmt.Sprint(n.Cores), tb(int64(n.MemB))})
 		}
 	}
@@ -249,7 +231,7 @@ func (s *sizingDoc) compute() {
 		if s.GetY() > 200 {
 			s.AddPage()
 		}
-		s.h2(fmt.Sprintf("%s: node options (%s)", c.Name, basisLabel(n.Basis)))
+		s.h2(fmt.Sprintf("%s: node options (%s)", c.Name, analysis.BasisLabel(n.Basis)))
 		rows = rows[:0]
 		for i, o := range n.Options {
 			mark := ""
@@ -261,7 +243,7 @@ func (s *sizingDoc) compute() {
 				fit = "yes"
 			}
 			rows = append(rows, []string{mark, fmt.Sprint(o.Nodes), fmt.Sprintf("%d × %d", o.Sockets, o.CoresPerSocket), fmt.Sprintf("%d GB", o.MemGB),
-				fmt.Sprint(o.TotalCores), gbToTB(o.Nodes * o.MemGB), fmt.Sprintf("%.0f%%", o.CPUUtil), fmt.Sprintf("%.0f%%", o.MemUtil),
+				fmt.Sprint(o.TotalCores), analysis.GBLabel(o.Nodes * o.MemGB), fmt.Sprintf("%.0f%%", o.CPUUtil), fmt.Sprintf("%.0f%%", o.MemUtil),
 				fmt.Sprintf("%.1f:1", o.Ratio), minGHz(o.MinGHz), fit})
 		}
 		s.table([]col{{"", 20, "L"}, {"Nodes", 11, "R"}, {"CPUs × cores", 18, "R"}, {"RAM/node", 16, "R"}, {"Cores", 13, "R"}, {"RAM total", 17, "R"},
