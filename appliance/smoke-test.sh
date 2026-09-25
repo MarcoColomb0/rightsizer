@@ -166,7 +166,9 @@ if grep -qiE "login:|audit|systemd\[" <<<"$text"; then
 $text"
 fi
 echo "✓ VM console shows the status screen: address, SSH key fingerprint, engine running"
-if ! grep -qiE "${FLATCAR_VERSION//./\\.}.*${FLATCAR_CHANNEL} updates" <<<"$text"; then
+# OCR confuses l with I, 1 or |.
+channel=${FLATCAR_CHANNEL//l/[lI1|]}
+if ! grep -qiE "${FLATCAR_VERSION//./\\.}.*${channel} updates" <<<"$text"; then
 	fail "the VM console must show Flatcar ${FLATCAR_VERSION} on the ${FLATCAR_CHANNEL} channel. OCR read:
 $text"
 fi
