@@ -19,7 +19,6 @@ file 0644 /etc/systemd/system/rightsizer-os-check.timer
 file 0644 /etc/sysctl.d/90-rightsizer.conf
 file 0644 /etc/systemd/logind.conf.d/10-rightsizer.conf
 file 0644 /etc/docker/daemon.json
-file 0644 /etc/flatcar/update.conf
 file 0644 /etc/systemd/system/vmtoolsd.service.d/10-rightsizer.conf
 enable rightsizer-network.service
 enable rightsizer.service

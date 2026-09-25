@@ -19,8 +19,8 @@ mkdir -p "$OUT"
 
 fetch() { curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$@"; }
 
-echo "› Flatcar ${FLATCAR_VERSION}"
-base="https://stable.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"
+echo "› Flatcar ${FLATCAR_VERSION} (${FLATCAR_CHANNEL})"
+base="https://${FLATCAR_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"
 fetch -o "$WORK/flatcar.ova" "$base/flatcar_production_vmware_ova.ova"
 fetch -o "$WORK/flatcar.ova.sig" "$base/flatcar_production_vmware_ova.ova.sig"
 export GNUPGHOME="$WORK/gnupg"

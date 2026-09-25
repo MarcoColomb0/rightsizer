@@ -96,6 +96,7 @@ network() {
 	if [ -n "$tz" ] && valid '^[A-Za-z0-9/_+-]+$' "$tz" && [ -e "/usr/share/zoneinfo/$tz" ]; then
 		ln -sfn "../usr/share/zoneinfo/$tz" /etc/localtime
 	fi
+	os_channel
 	guest_info
 }
 
@@ -119,13 +120,47 @@ admin_password() {
 	log "administrator password from vApp options will be applied"
 }
 
+# os_channel writes Flatcar's update settings: the channel from the vApp
+# options (lts or stable), never an automatic restart. Flatcar only updates
+# to higher versions and LTS versions are lower than stable ones, so an
+# appliance running a stable image cannot move to LTS; it keeps stable.
+os_channel() {
+	local f=/etc/flatcar/update.conf want built tmp
+	built="$(sed -n 's/^GROUP=//p' /usr/share/flatcar/update.conf 2>/dev/null | head -n1 || true)"
+	want="$(prop rightsizer.os_channel)"
+	case "$want" in
+	lts | stable) ;;
+	*) want="" ;;
+	esac
+	if [ "$want" = lts ] && [ -n "$built" ] && [ "$built" != lts ]; then
+		log "this appliance runs a ${built} image and cannot move to LTS; keeping ${built}"
+		want=""
+	fi
+	[ -n "$want" ] || want="$built"
+	valid '^[a-z]+$' "$want" || want=""
+	install -d -m 0755 /etc/flatcar
+	tmp="$(mktemp)"
+	{
+		[ -z "$want" ] || echo "GROUP=$want"
+		echo "REBOOT_STRATEGY=off"
+	} >"$tmp"
+	if cmp -s "$tmp" "$f"; then
+		rm -f "$tmp"
+		return 0
+	fi
+	chmod 0644 "$tmp"
+	mv -f "$tmp" "$f"
+	log "OS updates: channel ${want:-default}, restarts only on request"
+	systemctl try-restart update-engine.service locksmithd.service 2>/dev/null || true
+}
+
 # guest_info sets what VMware Tools reports to vCenter as the guest OS:
 # the appliance name and versions, with the short name matching the VM's
 # configured guest type so vCenter shows no mismatch.
 guest_info() {
 	local f=/etc/rightsizer/vmware-tools.conf tag os tmp
-	tag="$(sed -n 's/^IMAGE=.*:\([0-9A-Za-z._-]*\)$/\1/p' "$ENV_FILE" 2>/dev/null | head -n1)"
-	os="$(sed -n 's/^VERSION=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -n1)"
+	tag="$(sed -n 's/^IMAGE=.*:\([0-9A-Za-z._-]*\)$/\1/p' "$ENV_FILE" 2>/dev/null | head -n1 || true)"
+	os="$(sed -n 's/^VERSION=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -n1 || true)"
 	valid '^[0-9A-Za-z._-]+$' "$tag" || tag="unknown"
 	valid '^[0-9A-Za-z._-]+$' "$os" || os=""
 	install -d -m 0755 /etc/rightsizer
@@ -188,13 +223,14 @@ prepare() {
 	admin_password
 	load_bundle
 	install_console
+	os_channel
 	guest_info
 }
 
 UNIT='^[a-z0-9@.-]+\.(service|socket|path|timer|target)$'
 OWN_UNIT='^rightsizer[a-z0-9-]*\.(service|path|timer)$'
 KARG='^-?[A-Za-z0-9._=,-]+$'
-HOST_PATHS='^/(opt/rightsizer/bin/[a-z0-9-]+|etc/systemd/system/rightsizer[a-z0-9-]*\.(service|path|timer)|etc/systemd/system/vmtoolsd\.service\.d/10-rightsizer\.conf|etc/sysctl\.d/90-rightsizer\.conf|etc/systemd/logind\.conf\.d/10-rightsizer\.conf|etc/docker/daemon\.json|etc/flatcar/update\.conf)$'
+HOST_PATHS='^/(opt/rightsizer/bin/[a-z0-9-]+|etc/systemd/system/rightsizer[a-z0-9-]*\.(service|path|timer)|etc/systemd/system/vmtoolsd\.service\.d/10-rightsizer\.conf|etc/sysctl\.d/90-rightsizer\.conf|etc/systemd/logind\.conf\.d/10-rightsizer\.conf|etc/docker/daemon\.json)$'
 PREVIOUS=$STATE/host-previous
 
 # replace installs a file atomically: a running copy of this script keeps
@@ -346,7 +382,6 @@ apply() {
 	for a in "${changed[@]}"; do
 		case "$a" in
 		*/sysctl.d/*) sysctl --system >/dev/null || true ;;
-		*/flatcar/update.conf) systemctl try-restart update-engine.service locksmithd.service 2>/dev/null || true ;;
 		*/vmtoolsd.service.d/*) guest_info force ;;
 		*/docker/daemon.json) reasons+=("Docker settings changed") ;;
 		*/logind.conf.d/*) reasons+=("console settings changed") ;;

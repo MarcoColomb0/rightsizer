@@ -64,6 +64,9 @@ func Render(version, dataDir string, src Source) string {
 	if dns := resolvers(); len(dns) > 0 {
 		line("DNS", strings.Join(dns, ", "))
 	}
+	if osv := osVersion(); osv != "" {
+		line("OS", osv)
+	}
 	b.WriteString("\n")
 	if len(addrs) > 0 {
 		ip, _, _ := strings.Cut(strings.Fields(addrs[0])[0], "/")
@@ -105,6 +108,36 @@ func Render(version, dataDir string, src Source) string {
 	b.WriteString("  " + muted.Render("select the VM > Configure > vApp Options, then restart the VM.") + "\n")
 	b.WriteString("  " + muted.Render("This console is read-only. Updated "+time.Now().Format("2006-01-02 15:04")) + "\n")
 	return b.String()
+}
+
+var (
+	osReleasePath  = "/etc/os-release"
+	updateConfPath = "/etc/flatcar/update.conf"
+)
+
+// osVersion describes the appliance OS and its update channel.
+func osVersion() string {
+	get := func(path, key string) string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		for _, l := range strings.Split(string(b), "\n") {
+			if v, ok := strings.CutPrefix(l, key+"="); ok {
+				return strings.Trim(v, `"`)
+			}
+		}
+		return ""
+	}
+	v := get(osReleasePath, "VERSION")
+	if v == "" {
+		return ""
+	}
+	out := "Flatcar Container Linux " + v
+	if ch := get(updateConfPath, "GROUP"); ch != "" {
+		out += " · " + ch + " updates"
+	}
+	return out
 }
 
 func ipv4() []string {

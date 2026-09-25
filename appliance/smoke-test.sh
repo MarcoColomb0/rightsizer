@@ -25,7 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-base="https://stable.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"
+base="https://${FLATCAR_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"
 if [ ! -f "$WORK/flatcar.img" ]; then
 	curl -fsSL --retry 3 -o "$WORK/flatcar.img" "$base/flatcar_production_qemu_image.img"
 	curl -fsSL --retry 3 -o "$WORK/flatcar.img.sig" "$base/flatcar_production_qemu_image.img.sig"
@@ -166,6 +166,11 @@ if grep -qiE "login:|audit|systemd\[" <<<"$text"; then
 $text"
 fi
 echo "✓ VM console shows the status screen: address, SSH key fingerprint, engine running"
+if ! grep -qiE "${FLATCAR_VERSION//./\\.}.*${FLATCAR_CHANNEL} updates" <<<"$text"; then
+	fail "the VM console must show Flatcar ${FLATCAR_VERSION} on the ${FLATCAR_CHANNEL} channel. OCR read:
+$text"
+fi
+echo "✓ appliance runs Flatcar ${FLATCAR_VERSION} and updates from the ${FLATCAR_CHANNEL} channel"
 
 # Runs last: QEMU's user networking makes every client the same address,
 # so the lockout would block the logins the other checks need.
