@@ -54,18 +54,8 @@ python3 "$HERE/render-butane.py" "${ENGINE##*:}" | butane --strict -d "$HERE/hos
 cp "$WORK/ignition.json" "$OUT/rightsizer-${VERSION}.ign"
 
 echo "› OVF"
-python3 - "$HERE/rightsizer.ovf" "$WORK" "$VERSION" "$FLATCAR_VERSION" "$system_capacity" "$bundle_capacity" <<'EOF'
-import base64, os, sys
-tpl, work, version, flatcar, sys_cap, bun_cap = sys.argv[1:]
-ign = base64.b64encode(open(os.path.join(work, "ignition.json"), "rb").read()).decode()
-ovf = open(tpl).read().format(
-    version=version, version_number=version.lstrip("v"), flatcar_version=flatcar,
-    system_size=os.path.getsize(os.path.join(work, "rightsizer-system.vmdk")),
-    bundle_size=os.path.getsize(os.path.join(work, "rightsizer-bundle.vmdk")),
-    system_capacity=sys_cap, bundle_capacity=bun_cap, ignition=ign,
-)
-open(os.path.join(work, "rightsizer.ovf"), "w").write(ovf)
-EOF
+python3 "$HERE/render-ovf.py" "$HERE/rightsizer.ovf" "$WORK/rightsizer.ovf" "$VERSION" "$FLATCAR_VERSION" \
+	"$WORK/rightsizer-system.vmdk" "$WORK/rightsizer-bundle.vmdk" "$system_capacity" "$bundle_capacity" "$WORK/ignition.json"
 
 (
 	cd "$WORK"

@@ -39,6 +39,8 @@ jobs:
       - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
+      # The OVA is only built on tags; render its descriptor on every push.
+      - run: python3 appliance/render-ovf.py --check appliance/rightsizer.ovf
       - uses: golang/govulncheck-action@v1
         with:
           go-version-file: go.mod

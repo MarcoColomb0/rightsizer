@@ -65,7 +65,7 @@
         <Label>Time zone</Label>
         <Description>IANA time zone used in reports, for example Europe/Rome.</Description>
       </Property>
-      <Property ovf:key="guestinfo.rightsizer.os_channel" ovf:type="string" ovf:qualifiers="ValueMap{&quot;lts&quot;,&quot;stable&quot;}" ovf:userConfigurable="true" ovf:value="lts">
+      <Property ovf:key="guestinfo.rightsizer.os_channel" ovf:type="string" ovf:qualifiers="ValueMap{{&quot;lts&quot;,&quot;stable&quot;}}" ovf:userConfigurable="true" ovf:value="lts">
         <Label>OS update channel</Label>
         <Description>Flatcar Container Linux channel for automatic OS updates. lts: security fixes only, a restart about every three months. stable: newer kernels and features, a restart about every month. You can move from lts to stable later, not back.</Description>
       </Property>
