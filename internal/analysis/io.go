@@ -27,7 +27,8 @@ func (h *LogHist) AddN(v float64, n uint64) {
 	if h.B == nil {
 		h.B = map[uint16]uint32{}
 	}
-	h.B[uint16(min(math.Log1p(v)/logStep, math.MaxUint16))] += uint32(n)
+	i := uint16(min(math.Log1p(v)/logStep, math.MaxUint16))
+	h.B[i] = addCount(h.B[i], n)
 	h.N += n
 	h.Sum += v * float64(n)
 	h.Max = max(h.Max, v)
@@ -214,7 +215,7 @@ func DownsampleIO(p []IOPoint, n int) []IOPoint {
 	}
 	out := make([]IOPoint, 0, n)
 	step := float64(len(p)) / float64(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lo, hi := int(float64(i)*step), int(float64(i+1)*step)
 		var iops, kbps float64
 		for _, x := range p[lo:hi] {

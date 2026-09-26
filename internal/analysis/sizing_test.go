@@ -92,11 +92,11 @@ func TestIOSummedAcrossHosts(t *testing.T) {
 
 func sizingFixture() SizingInput {
 	inv := &vc.Inventory{}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		inv.Hosts = append(inv.Hosts, vc.Host{Ref: fmt.Sprintf("h%d", i), Name: fmt.Sprintf("esx%d", i), Cluster: "prod",
 			CPUModel: "Intel(R) Xeon(R) Gold 6130", Sockets: 2, Cores: 32, Threads: 64, MHz: 2600, MemBytes: 512 << 30, NUMANodes: 2, Connected: true})
 	}
-	for i := 0; i < 39; i++ {
+	for i := range 39 {
 		os := "Microsoft Windows Server 2022 (64-bit)"
 		if i%2 == 1 {
 			os = "Ubuntu Linux (64-bit)"

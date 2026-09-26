@@ -1,10 +1,8 @@
 package analysis
 
 import (
-	"fmt"
 	"math"
 	"slices"
-	"time"
 
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
@@ -132,8 +130,7 @@ func correlate(pk *Peaks, loads []vmLoad) {
 	for i := range parent {
 		parent[i] = i
 	}
-	var find func(int) int
-	find = func(i int) int {
+	find := func(i int) int {
 		for parent[i] != i {
 			parent[i] = parent[parent[i]]
 			i = parent[i]
@@ -142,7 +139,7 @@ func correlate(pk *Peaks, loads []vmLoad) {
 	}
 	strongest := make([]float64, n)
 	var comps []Pair
-	for i := 0; i < n; i++ {
+	for i := range n {
 		for j := i + 1; j < n; j++ {
 			r, ok := pearson(loads[i].s, loads[j].s)
 			if !ok {
@@ -159,7 +156,7 @@ func correlate(pk *Peaks, loads []vmLoad) {
 		}
 	}
 	groups := map[int]*Group{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		root := find(i)
 		if root == i && strongest[i] == 0 {
 			continue
@@ -192,7 +189,7 @@ func correlate(pk *Peaks, loads []vmLoad) {
 // pearson correlates two demand series over the slots both have data for.
 func pearson(a, b *VMStats) (float64, bool) {
 	var n, sx, sy, sxx, syy, sxy float64
-	for i := 0; i < min(len(a.Demand), len(b.Demand)); i++ {
+	for i := range min(len(a.Demand), len(b.Demand)) {
 		if a.Slots[i] == 0 || b.Slots[i] == 0 {
 			continue
 		}
@@ -213,8 +210,4 @@ func pearson(a, b *VMStats) (float64, bool) {
 		return 0, false
 	}
 	return cov / math.Sqrt(vx*vy), true
-}
-
-func hourName(d, h int) string {
-	return fmt.Sprintf("%s %02d:00", time.Weekday((d + 1) % 7).String()[:3], h)
 }

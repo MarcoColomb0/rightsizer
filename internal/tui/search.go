@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -60,9 +61,9 @@ func next(matches []int, from int, backward bool) (row int, wrapped bool) {
 		return -1, false
 	}
 	if backward {
-		for i := len(matches) - 1; i >= 0; i-- {
-			if matches[i] < from {
-				return matches[i], false
+		for _, r := range slices.Backward(matches) {
+			if r < from {
+				return r, false
 			}
 		}
 		return matches[len(matches)-1], true

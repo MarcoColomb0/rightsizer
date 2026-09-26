@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -31,10 +32,10 @@ func TestVault(t *testing.T) {
 	if !v2.Locked() {
 		t.Fatal("reopened vault must be locked")
 	}
-	if _, err := v2.Get("vc1"); err != ErrLocked {
+	if _, err := v2.Get("vc1"); !errors.Is(err, ErrLocked) {
 		t.Fatal("locked vault must refuse reads")
 	}
-	if err := v2.Unlock("wrong password here"); err != ErrWrongPassword {
+	if err := v2.Unlock("wrong password here"); !errors.Is(err, ErrWrongPassword) {
 		t.Fatalf("want wrong password, got %v", err)
 	}
 	if err := v2.Unlock(pw); err != nil {

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
+
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 )
@@ -55,11 +57,7 @@ func (e *Engine) SetSizingParams(p analysis.SizingParams) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	tmp := e.sizingPath() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, e.sizingPath()); err != nil {
+	if err := atomicfile.WriteFile(e.sizingPath(), b, 0o600); err != nil {
 		return err
 	}
 	e.sizing = p

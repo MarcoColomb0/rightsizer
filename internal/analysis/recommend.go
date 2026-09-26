@@ -378,8 +378,7 @@ func Analyze(in Input) *Result {
 		}
 	}
 	for _, f := range r.Findings {
-		switch f.Kind {
-		case PoweredOff, OldSnap, ThickDisk, Orphan:
+		if f.Kind.reclaimsStorage() {
 			t.Reclaim += f.Bytes
 		}
 	}
@@ -402,8 +401,18 @@ func impact(f Finding) float64 {
 		return 1000 + f.Metric + score
 	case WideVM:
 		return 500 + f.Metric + score
+	default:
+		return score
 	}
-	return score
+}
+
+func (k Kind) reclaimsStorage() bool {
+	switch k {
+	case PoweredOff, OldSnap, ThickDisk, Orphan:
+		return true
+	default:
+		return false
+	}
 }
 
 // SortFindings orders by priority, then by impact, then by name.

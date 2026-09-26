@@ -10,7 +10,7 @@ import (
 func TestAccuracyAndEarlierPeak(t *testing.T) {
 	inv := &vc.Inventory{VMs: []vc.VM{{Ref: "bursty", Name: "bursty"}, {Ref: "steady", Name: "steady"}}}
 	rt, live := NewStore(time.Now()), NewStore(time.Now())
-	for i := 0; i < 2*fullDay; i++ {
+	for i := range 2 * fullDay {
 		// bursty: idle most of the time with 20-second spikes to 90%
 		v := 10.0
 		if i%10 == 0 {
@@ -19,7 +19,7 @@ func TestAccuracyAndEarlierPeak(t *testing.T) {
 		rt.VMs["bursty"] = addCPU(rt.VMs["bursty"], v, 1)
 		rt.VMs["steady"] = addCPU(rt.VMs["steady"], 40, 1)
 	}
-	for i := 0; i < 2*fullDay/15; i++ {
+	for range 2 * fullDay / 15 {
 		live.VMs["bursty"] = addCPU(live.VMs["bursty"], 18, 15) // 5-minute average of the same load
 		live.VMs["steady"] = addCPU(live.VMs["steady"], 40, 15)
 	}

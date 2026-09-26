@@ -122,7 +122,7 @@ func osVersion() string {
 		if err != nil {
 			return ""
 		}
-		for _, l := range strings.Split(string(b), "\n") {
+		for l := range strings.SplitSeq(string(b), "\n") {
 			if v, ok := strings.CutPrefix(l, key+"="); ok {
 				return strings.Trim(v, `"`)
 			}
@@ -180,21 +180,25 @@ func gateway() string {
 
 func resolvers() []string {
 	for _, p := range []string{"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"} {
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		var out []string
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			if fs := strings.Fields(sc.Text()); len(fs) == 2 && fs[0] == "nameserver" {
-				out = append(out, fs[1])
-			}
-		}
-		f.Close()
-		if len(out) > 0 {
+		if out := nameservers(p); len(out) > 0 {
 			return out
 		}
 	}
 	return nil
+}
+
+func nameservers(path string) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if fs := strings.Fields(sc.Text()); len(fs) == 2 && fs[0] == "nameserver" {
+			out = append(out, fs[1])
+		}
+	}
+	return out
 }

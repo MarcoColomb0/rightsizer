@@ -46,7 +46,7 @@ func demoSizing() *analysis.Sizing {
 	}
 	st := in.RT
 	st.IO[""] = &analysis.IOStats{}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		id := fmt.Sprintf("ds%d", i)
 		est.Datastores = append(est.Datastores, vc.DatastoreDetail{Name: fmt.Sprintf("ds-prod-%02d", i+1), Type: "VMFS", Version: "VMFS 6.82", ID: id,
 			Capacity: 20 << 40, Free: int64(4+i*2) << 40, Uncommitted: 8 << 40, Accessible: true, Hosts: all, VMs: 20,
@@ -74,7 +74,7 @@ func demoSizing() *analysis.Sizing {
 		st.IO["ds0"].Latency.AddN(1+d, 15)
 	}
 	for name, cs := range st.Clusters {
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			cs.Net.AddN(float64(200000+i*800), 1)
 			cs.IOPS.AddN(float64(5000+i*10), 1)
 			cs.KBps.AddN(float64(120000+i*300), 1)

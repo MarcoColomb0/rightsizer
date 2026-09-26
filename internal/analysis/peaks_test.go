@@ -10,7 +10,7 @@ import (
 
 func series(ref string, interval int32, start time.Time, n int, f func(i int) (cpuPct, ready, mhz float64)) vc.Series {
 	s := vc.Series{Ref: ref, Interval: interval, Values: map[string][]float64{}}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		c, r, m := f(i)
 		s.TS = append(s.TS, start.Add(time.Duration(i+1)*time.Duration(interval)*time.Second))
 		s.Values[vc.CPUUsage] = append(s.Values[vc.CPUUsage], c)
@@ -111,7 +111,7 @@ func TestPreviewSelection(t *testing.T) {
 func TestPlacementFindings(t *testing.T) {
 	h := vc.Host{Name: "esx1", Cores: 32, NUMANodes: 2, MemBytes: 512 << 30}
 	s := &VMStats{}
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		s.CoStop.Add(6)
 	}
 	vm := vc.VM{Name: "big", VCPU: 24, CoresPerSock: 1, MemMB: 64 << 10, Host: "esx1"}

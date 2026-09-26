@@ -116,7 +116,7 @@ type group struct {
 
 func parseGroups(s string) ([]group, error) {
 	var out []group
-	for _, part := range strings.Split(s, ";") {
+	for part := range strings.SplitSeq(s, ";") {
 		if part = strings.TrimSpace(part); part == "" {
 			continue
 		}
@@ -126,7 +126,7 @@ func parseGroups(s string) ([]group, error) {
 			return nil, fmt.Errorf("workload group %q: use name=pattern,pattern", part)
 		}
 		g := group{name: name}
-		for _, p := range strings.Split(pats, ",") {
+		for p := range strings.SplitSeq(pats, ",") {
 			if p = strings.ToLower(strings.TrimSpace(p)); p == "" {
 				continue
 			}

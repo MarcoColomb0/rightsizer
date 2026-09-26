@@ -54,6 +54,33 @@ func (v sim) cfg() Config {
 	return Config{Host: v.host, User: v.user, Fingerprint: v.fp, Duration: 24 * time.Hour, Profile: "balanced"}
 }
 
+type fetched struct {
+	StatusCode int
+	Header     http.Header
+	TLS        *tls.ConnectionState
+}
+
+// download fetches a shared report, trusting the server's self-signed
+// certificate.
+func download(t *testing.T, url string) (fetched, []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	res, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fetched{res.StatusCode, res.Header, res.TLS}, body
+}
+
 func waitPolls(t *testing.T, e *Engine, id string, n uint64) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -165,22 +192,16 @@ func TestMultiSourceWithVault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cl := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	res, err := cl.Get(sh.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != 200 || !strings.HasPrefix(string(body), "%PDF") {
+	res, body := download(t, sh.URL)
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(string(body), "%PDF") {
 		t.Fatalf("combined download failed: %d", res.StatusCode)
 	}
 	sum := sha256.Sum256(res.TLS.PeerCertificates[0].Raw)
 	if strings.ReplaceAll(sh.Fingerprint, ":", "") != fmt.Sprintf("%X", sum) {
 		t.Fatal("served certificate does not match advertised fingerprint")
 	}
-	bad, _ := cl.Get(strings.Replace(sh.URL, "/rightsizer-", "/x-", 1))
-	if bad.StatusCode != 404 {
+	bad, _ := download(t, strings.Replace(sh.URL, "/rightsizer-", "/x-", 1))
+	if bad.StatusCode != http.StatusNotFound {
 		t.Fatalf("wrong file name must 404, got %d", bad.StatusCode)
 	}
 
@@ -418,15 +439,9 @@ func TestSizing(t *testing.T) {
 	if sh.Source != "sizing:"+ida || len(sh.Extra) != 1 || !strings.HasSuffix(sh.Extra[0].URL, "-data.zip") {
 		t.Fatalf("share %+v", sh)
 	}
-	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 	for _, u := range []string{sh.URL, sh.Extra[0].URL} {
-		res, err := hc.Get(u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, _ := io.ReadAll(res.Body)
-		res.Body.Close()
-		if res.StatusCode != 200 || len(body) < 100 {
+		res, body := download(t, u)
+		if res.StatusCode != http.StatusOK || len(body) < 100 {
 			t.Fatalf("%s: %d", u, res.StatusCode)
 		}
 		if strings.HasSuffix(u, ".zip") && res.Header.Get("Content-Type") != "application/zip" {

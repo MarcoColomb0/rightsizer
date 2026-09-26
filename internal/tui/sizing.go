@@ -172,8 +172,7 @@ func (m Model) readSizingForm() (analysis.SizingParams, int, error) {
 	p.Groups = strings.TrimSpace(m.szIn[szInput[soGroups]].Value())
 	if err := p.Validate(); err != nil {
 		field := soSave
-		var pe *analysis.ParamError
-		if errors.As(err, &pe) {
+		if pe, ok := errors.AsType[*analysis.ParamError](err); ok {
 			if f, ok := paramField[pe.Field]; ok {
 				field = f
 			}
@@ -260,17 +259,17 @@ func (m Model) sizingView() string {
 		o, ok := n.Picked()
 		if !ok {
 			if n.Unsized() {
-				b.WriteString(fmt.Sprintf("  %-*s %s\n", w, clip(c.Name, w), sWarn.Render("no node shape fits; left out of the totals, see the notes")))
+				fmt.Fprintf(&b, "  %-*s %s\n", w, clip(c.Name, w), sWarn.Render("no node shape fits; left out of the totals, see the notes"))
 			}
 			continue
 		}
-		b.WriteString(fmt.Sprintf("  %-*s %s  %s\n", w, clip(c.Name, w), sAccent.Render(o.String()), fmt.Sprintf("%d cores, today %d", o.TotalCores, c.Cores)))
+		fmt.Fprintf(&b, "  %-*s %s  %s\n", w, clip(c.Name, w), sAccent.Render(o.String()), fmt.Sprintf("%d cores, today %d", o.TotalCores, c.Cores))
 		b.WriteString(pad + sMuted.Render(fmt.Sprintf("CPU %.0f%% · RAM %.0f%% with spares out · %s", o.CPUUtil, o.MemUtil, n.Ports)) + "\n")
 	}
 	t := sz.Totals
 	nt, alt := t.For(p.Basis), t.For(analysis.OtherBasis(p.Basis))
-	b.WriteString(fmt.Sprintf("  %-*s %s  %s\n", w, "Total", sBold.Render(fmt.Sprintf("%d nodes · %d cores · %s RAM", nt.Nodes, nt.Cores, analysis.GBLabel(nt.MemGB))),
-		sMuted.Render(fmt.Sprintf("today %d hosts · %d cores · %s", t.Hosts, t.Cores, analysis.Human(t.MemB)))))
+	fmt.Fprintf(&b, "  %-*s %s  %s\n", w, "Total", sBold.Render(fmt.Sprintf("%d nodes · %d cores · %s RAM", nt.Nodes, nt.Cores, analysis.GBLabel(nt.MemGB))),
+		sMuted.Render(fmt.Sprintf("today %d hosts · %d cores · %s", t.Hosts, t.Cores, analysis.Human(t.MemB))))
 	other := "Rightsized"
 	if p.Basis == analysis.BasisRightsized {
 		other = "As provisioned"
@@ -279,23 +278,23 @@ func (m Model) sizingView() string {
 
 	b.WriteString(sBold.Render("Compute today") + "\n")
 	for _, c := range sz.Clusters {
-		b.WriteString(fmt.Sprintf("  %-*s %d hosts · %d cores · %s RAM · %d vCPU (%.1f:1) · %s vRAM\n", w, clip(c.Name, w),
-			c.Hosts, c.Cores, analysis.Human(c.MemB), c.VCPU, c.Ratio, analysis.GiB(c.MemMB)))
+		fmt.Fprintf(&b, "  %-*s %d hosts · %d cores · %s RAM · %d vCPU (%.1f:1) · %s vRAM\n", w, clip(c.Name, w),
+			c.Hosts, c.Cores, analysis.Human(c.MemB), c.VCPU, c.Ratio, analysis.GiB(c.MemMB))
 		b.WriteString(pad + sMuted.Render(fmt.Sprintf("%d VMs on, %d off · CPU p%.0f %s, peak %s", c.VMs, c.VMsOff, sz.Percentile, ghz(c.DemandMHz), ghz(c.PeakMHz))) + "\n")
 	}
 
 	st := sz.Storage
 	b.WriteString("\n" + sBold.Render("Storage") + sMuted.Render("  raw used, before data reduction") + "\n")
-	b.WriteString(fmt.Sprintf("  Raw used %s  %s\n", sAccent.Render(analysis.Human(st.RawUsed)),
-		sMuted.Render(fmt.Sprintf("disks %s · snapshots %s · other %s · templates %s · RDM %s", analysis.Human(st.VMDisks), analysis.Human(st.Snapshots), analysis.Human(st.Other), analysis.Human(st.Templates), analysis.Human(st.RDM)))))
-	b.WriteString(fmt.Sprintf("  Plan %s usable  %s\n", sAccent.Render(analysis.Human(st.Plan)),
-		sMuted.Render(fmt.Sprintf("+%s%% growth, %s%% free · provisioned %s", fmtNum(p.Growth), fmtNum(p.FreeSpace), analysis.Human(st.Provisioned)))))
+	fmt.Fprintf(&b, "  Raw used %s  %s\n", sAccent.Render(analysis.Human(st.RawUsed)),
+		sMuted.Render(fmt.Sprintf("disks %s · snapshots %s · other %s · templates %s · RDM %s", analysis.Human(st.VMDisks), analysis.Human(st.Snapshots), analysis.Human(st.Other), analysis.Human(st.Templates), analysis.Human(st.RDM))))
+	fmt.Fprintf(&b, "  Plan %s usable  %s\n", sAccent.Render(analysis.Human(st.Plan)),
+		sMuted.Render(fmt.Sprintf("+%s%% growth, %s%% free · provisioned %s", fmtNum(p.Growth), fmtNum(p.FreeSpace), analysis.Human(st.Provisioned))))
 	b.WriteString(sMuted.Render(fmt.Sprintf("  Not included: swap %s, orphaned disks %s", analysis.Human(st.Swap), analysis.Human(st.Orphans))) + "\n")
 	var types []string
 	for _, u := range st.ByType {
 		types = append(types, fmt.Sprintf("%s %s %s", u.Type, u.Protocol, analysis.Human(u.Used)))
 	}
-	b.WriteString(fmt.Sprintf("  Datastores %s used of %s  %s\n", analysis.Human(st.Used), analysis.Human(st.Capacity), sMuted.Render(strings.Join(types, " · "))))
+	fmt.Fprintf(&b, "  Datastores %s used of %s  %s\n", analysis.Human(st.Used), analysis.Human(st.Capacity), sMuted.Render(strings.Join(types, " · ")))
 	if io := st.IO; io.Available {
 		src := ""
 		if io.Preview {
@@ -310,7 +309,7 @@ func (m Model) sizingView() string {
 		if io.Latency {
 			parts = append(parts, fmt.Sprintf("%.1f ms", io.LatencyMs))
 		}
-		b.WriteString(fmt.Sprintf("  IOPS p%.0f %s  %s\n", sz.Percentile, sAccent.Render(report.Num(io.IOPS)), sMuted.Render(strings.Join(parts, " · ")+src)))
+		fmt.Fprintf(&b, "  IOPS p%.0f %s  %s\n", sz.Percentile, sAccent.Render(report.Num(io.IOPS)), sMuted.Render(strings.Join(parts, " · ")+src))
 	} else {
 		b.WriteString(sMuted.Render("  Storage performance: waiting for the first samples.") + "\n")
 	}
@@ -337,7 +336,7 @@ func (m Model) sizingView() string {
 		if len(parts) == 0 {
 			parts = append(parts, sMuted.Render("hardware details not read yet"))
 		}
-		b.WriteString(fmt.Sprintf("  %-*s %s\n", w, clip(c.Name, w), strings.Join(parts, " · ")))
+		fmt.Fprintf(&b, "  %-*s %s\n", w, clip(c.Name, w), strings.Join(parts, " · "))
 	}
 	if len(sz.Notes) > 0 {
 		b.WriteString("\n" + sBold.Render("Before you order") + sMuted.Render("  all notes are in the PDF") + "\n")

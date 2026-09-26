@@ -162,7 +162,8 @@ func (s *Server) start() error {
 	if err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", s.Listen)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", s.Listen)
 	if err != nil {
 		return fmt.Errorf("download server: %w", err)
 	}

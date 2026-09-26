@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -186,8 +189,8 @@ func (s *Source) importHistory(ctx context.Context, cl *vc.Client, inv *vc.Inven
 	}
 	hc, cp := analysis.Capacity(inv)
 	// Oldest window first: samples older than the last one seen are ignored.
-	for i := len(plan) - 1; i >= 0; i-- {
-		w := plan[i]
+	for i, w := range slices.Backward(plan) {
+
 		s.setHistory(fmt.Sprintf("loading %d%%", (len(plan)-1-i)*100/len(plan)))
 		vs, err := cl.History(ctx, "VirtualMachine", vms, vc.HistoryVMMetrics, w)
 		if err == nil {
@@ -591,23 +594,9 @@ func (s *Source) save() error {
 }
 
 func writeState(path string, st *state) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if err := gob.NewEncoder(f).Encode(st); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.Write(path, 0o600, func(w io.Writer) error {
+		return gob.NewEncoder(w).Encode(st)
+	})
 }
 
 func readState(path string) (state, error) {

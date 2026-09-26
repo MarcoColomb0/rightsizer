@@ -3,10 +3,11 @@ package report
 import (
 	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/go-pdf/fpdf"
@@ -68,19 +69,11 @@ func newDoc(title, source string, created time.Time) *doc {
 	return d
 }
 
-// save writes the document next to path and renames it into place.
 func (d *doc) save(path string) error {
 	if err := d.Error(); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := d.OutputFileAndClose(tmp); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.Write(path, 0o600, d.Output)
 }
 
 func WritePDF(r *analysis.Result, path string) error {
@@ -506,7 +499,7 @@ func (d *doc) heatmap(pk *analysis.Peaks) {
 		d.SetXY(margin, y0+float64(day)*ch)
 		d.color(cMuted)
 		d.CellFormat(11, ch, name, "", 0, "L", false, 0, "")
-		for h := 0; h < 24; h++ {
+		for h := range 24 {
 			c := cBand
 			if pk.HeatmapN[day][h] > 0 {
 				v := min(pk.Heatmap[day][h]/100, 1)
@@ -863,8 +856,9 @@ func sevColor(s analysis.Severity) rgb {
 		return cBad
 	case analysis.Medium:
 		return cWarn
+	default:
+		return cMuted
 	}
-	return cMuted
 }
 
 func pct(from, to int) string {

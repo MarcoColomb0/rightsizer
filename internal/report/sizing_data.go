@@ -4,10 +4,12 @@ import (
 	"archive/zip"
 	"encoding/csv"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 )
@@ -15,47 +17,32 @@ import (
 // WriteSizingData writes the sizing tables as CSV files in a zip archive,
 // for spreadsheets.
 func WriteSizingData(sz *analysis.Sizing, path string) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp)
-	z := zip.NewWriter(f)
-	for _, t := range sizingTables(sz) {
-		w, err := z.CreateHeader(&zip.FileHeader{Name: t.name, Method: zip.Deflate, Modified: sz.Generated})
-		if err != nil {
-			f.Close()
-			return err
-		}
-		c := csv.NewWriter(w)
-		if err := c.Write(t.head); err != nil {
-			f.Close()
-			return err
-		}
-		for _, r := range t.rows {
-			for i := range r {
-				r[i] = cell(r[i])
+	return atomicfile.Write(path, 0o600, func(w io.Writer) error {
+		z := zip.NewWriter(w)
+		for _, t := range sizingTables(sz) {
+			f, err := z.CreateHeader(&zip.FileHeader{Name: t.name, Method: zip.Deflate, Modified: sz.Generated})
+			if err != nil {
+				return err
 			}
-			if err := c.Write(r); err != nil {
-				f.Close()
+			c := csv.NewWriter(f)
+			if err := c.Write(t.head); err != nil {
+				return err
+			}
+			for _, r := range t.rows {
+				for i := range r {
+					r[i] = cell(r[i])
+				}
+				if err := c.Write(r); err != nil {
+					return err
+				}
+			}
+			c.Flush()
+			if err := c.Error(); err != nil {
 				return err
 			}
 		}
-		c.Flush()
-		if err := c.Error(); err != nil {
-			f.Close()
-			return err
-		}
-	}
-	if err := z.Close(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+		return z.Close()
+	})
 }
 
 // cell keeps spreadsheet programs from running text from vCenter, such as a

@@ -24,14 +24,21 @@ func Probe(ctx context.Context, host string) (*CertInfo, error) {
 	addr := hostPort(host)
 	d := tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 10 * time.Second},
-		Config:    &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+		// The probe only reads the certificate so the user can compare its
+		// fingerprint; the certificate is verified below, and connections
+		// either verify it or pin the fingerprint the user accepted.
+		Config: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, // #nosec G402
 	}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	certs := conn.(*tls.Conn).ConnectionState().PeerCertificates
+	tc, ok := conn.(*tls.Conn)
+	if !ok {
+		return nil, errors.New("not a TLS connection")
+	}
+	certs := tc.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
 		return nil, errors.New("server presented no certificate")
 	}

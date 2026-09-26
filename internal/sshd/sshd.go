@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/ssh"
@@ -98,11 +100,7 @@ func hostKey(path string) (gossh.Signer, error) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return nil, err
 		}
-		tmp := path + ".tmp"
-		if err := os.WriteFile(tmp, b, 0o600); err != nil {
-			return nil, err
-		}
-		if err := os.Rename(tmp, path); err != nil {
+		if err := atomicfile.WriteFile(path, b, 0o600); err != nil {
 			return nil, err
 		}
 		pub, err := gossh.NewPublicKey(priv.Public())

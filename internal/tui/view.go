@@ -166,6 +166,7 @@ func progressText(s engine.Status) string {
 		return "finished " + s.Finished.Format("Jan 02")
 	case engine.NeedPassword:
 		return "needs password"
+	case engine.Running:
 	}
 	total := s.Ends.Sub(s.Started)
 	if total <= 0 {
@@ -191,9 +192,9 @@ func sharesBox(shares []report.Share, sources []engine.Status) string {
 		if id, ok := strings.CutPrefix(sh.Source, "sizing:"); ok {
 			name = "Sizing · " + names[id]
 		}
-		b.WriteString(fmt.Sprintf("\n%s  %s\n%s", sBold.Render(name),
+		fmt.Fprintf(&b, "\n%s  %s\n%s", sBold.Render(name),
 			sMuted.Render(fmt.Sprintf("expires %s · %d downloads", sh.Expires.Format("Jan 02 15:04"), sh.Downloads)),
-			sAccent.Render(sh.URL)))
+			sAccent.Render(sh.URL))
 		for _, x := range sh.Extra {
 			b.WriteString("\n" + sAccent.Render(x.URL) + sMuted.Render("  spreadsheet data (CSV)"))
 		}
@@ -423,6 +424,7 @@ func (m Model) viewSource() string {
 		k = append(k, "r", "resume", "f", "finish now")
 	case engine.Running:
 		k = append(k, "f", "finish now")
+	case engine.Done:
 	}
 	k = append(k, "x", "remove")
 	if m.updateAvailable() {
@@ -567,13 +569,13 @@ func peaksView(r *analysis.Result) string {
 			continue
 		}
 		b.WriteString(sBold.Render(c.Name) + "\n")
-		b.WriteString(fmt.Sprintf("  Sum of VM peaks %s · combined peak %s · diversity %s\n",
-			ghz(pk.SumPeakMHz), ghz(pk.CombinedPeakMHz), sAccent.Render(fmt.Sprintf("%.2f×", pk.Diversity))))
-		b.WriteString(fmt.Sprintf("  Hosts for CPU: %d if sized on the sum of peaks, %s peak-aware\n", pk.NaiveHosts, sAccent.Render(fmt.Sprint(pk.AwareHosts))))
+		fmt.Fprintf(&b, "  Sum of VM peaks %s · combined peak %s · diversity %s\n",
+			ghz(pk.SumPeakMHz), ghz(pk.CombinedPeakMHz), sAccent.Render(fmt.Sprintf("%.2f×", pk.Diversity)))
+		fmt.Fprintf(&b, "  Hosts for CPU: %d if sized on the sum of peaks, %s peak-aware\n", pk.NaiveHosts, sAccent.Render(fmt.Sprint(pk.AwareHosts)))
 		b.WriteString(sMuted.Render("        00    03    06    09    12    15    18    21") + "\n")
 		for d, day := range []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"} {
 			var row strings.Builder
-			for h := 0; h < 24; h++ {
+			for h := range 24 {
 				i := 0
 				if pk.HeatmapN[d][h] > 0 {
 					i = 1 + int(min(pk.Heatmap[d][h]/100, 0.999)*float64(len(shades)-1))

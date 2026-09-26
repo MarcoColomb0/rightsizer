@@ -1,0 +1,79 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  enable:
+    # correctness
+    - govet
+    - staticcheck
+    - unused
+    - errcheck
+    - errorlint
+    - nilerr
+    - forcetypeassert
+    - copyloopvar
+    - durationcheck
+    - reassign
+    - exhaustive
+    # security and resources
+    - gosec
+    - bidichk
+    - asciicheck
+    - bodyclose
+    - noctx
+    - containedctx
+    - fatcontext
+    # style that catches mistakes
+    - gocritic
+    - misspell
+    - predeclared
+    - errname
+    - unconvert
+    - ineffassign
+    - sloglint
+    # tests
+    - thelper
+    - usetesting
+    # modernization
+    - modernize
+    - intrange
+    - usestdlibvars
+    - nolintlint
+  exclusions:
+    presets:
+      # Close, Flush, Remove and print errors on paths where nothing can be
+      # done about them. Writes check Close explicitly.
+      - std-error-handling
+    rules:
+      # Tests use self-signed TLS, fixed seeds and temporary files on purpose.
+      - path: _test\.go
+        linters:
+          - gosec
+  settings:
+    errcheck:
+      check-type-assertions: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    gosec:
+      excludes:
+        # Paths come from the tool's own data directory, fixed system files or
+        # the operator's command line, never from vCenter or the network.
+        - G304
+        - G703
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    sloglint:
+      kv-only: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

@@ -162,6 +162,7 @@ The sizing options (`o`) apply to every vCenter and are kept across upgrades: co
 
 ```bash
 make test       # unit tests and integration tests against the govmomi vCenter simulator
+make lint       # golangci-lint with the checks in .golangci.yml
 make build      # ./rightsizer
 make image      # rightsizer:local
 make demo-pdf   # sample report from synthetic data

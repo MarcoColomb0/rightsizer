@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -24,7 +25,6 @@ type fake struct {
 	upgraded string
 	excl     []analysis.Exclusion
 	rebooted bool
-	lockedPw bool
 	sz       *analysis.Sizing
 	params   analysis.SizingParams
 	sized    []string
@@ -88,8 +88,8 @@ func peaksDemo() *analysis.Peaks {
 	pk := &analysis.Peaks{SumPeakMHz: 420000, CombinedPeakMHz: 262000, Diversity: 1.6, NaiveHosts: 7, AwareHosts: 4,
 		CoPeak:        []analysis.Group{{VMs: []string{"sql-01", "sql-02"}, R: 0.93}},
 		Complementary: []analysis.Pair{{A: "batch-01", B: "web-01", R: -0.71}}}
-	for d := 0; d < 7; d++ {
-		for h := 0; h < 24; h++ {
+	for d := range 7 {
+		for h := range 24 {
 			pk.Heatmap[d][h], pk.HeatmapN[d][h] = float64(h*4), 1
 		}
 	}
@@ -133,7 +133,7 @@ func send(t *testing.T, m Model, msgs ...tea.Msg) Model {
 	t.Helper()
 	for _, msg := range msgs {
 		nm, cmd := m.Update(msg)
-		m = run(nm.(Model), cmd)
+		m = run(asModel(nm), cmd)
 	}
 	return m
 }
@@ -150,9 +150,17 @@ func run(m Model, cmd tea.Cmd) Model {
 		}
 	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg, sizingMsg, sizingParamsMsg:
 		nm, next := m.Update(out)
-		m = run(nm.(Model), next)
+		m = run(asModel(nm), next)
 	}
 	return m
+}
+
+func asModel(m tea.Model) Model {
+	mm, ok := m.(Model)
+	if !ok {
+		panic(fmt.Sprintf("unexpected model %T", m))
+	}
+	return mm
 }
 
 func keys1(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
@@ -160,7 +168,7 @@ func keys1(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: [
 func view(t *testing.T, m Model, want ...string) string {
 	t.Helper()
 	nm, _ := m.Update(tea.WindowSizeMsg{Width: 130, Height: 40})
-	v := nm.(Model).View()
+	v := asModel(nm).View()
 	if os.Getenv("RIGHTSIZER_TUI_DUMP") != "" {
 		t.Log("\n" + v)
 	}
@@ -253,7 +261,7 @@ func TestUpdatePrompt(t *testing.T) {
 	}
 	view(t, m, "Update available", "v1.1.0", "[Y/n]", "Running analyses continue")
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if !nm.(Model).UpgradeRequested() || cmd == nil {
+	if !asModel(nm).UpgradeRequested() || cmd == nil {
 		t.Fatal("enter must accept the default Y")
 	}
 	m = New(f, Options{Version: "v1.0.0", Latest: "v1.1.0", CanUpgrade: true})

@@ -3,6 +3,7 @@ package analysis
 import (
 	"errors"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -71,12 +72,7 @@ func (x Exclusion) covers(k Kind) bool {
 	if len(x.Kinds) == 0 {
 		return true
 	}
-	for _, c := range x.Kinds {
-		if c == k {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(x.Kinds, k)
 }
 
 func (x Exclusion) matchesVM(uuid, name string) bool {

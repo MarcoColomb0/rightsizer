@@ -161,7 +161,7 @@ func New(b ipc.Backend, opt Options) Model {
 	m.szIn[szInput[soGroups]].CharLimit = 1000
 	m.szIn[szInput[soGroups]].Placeholder = "none: group by guest OS"
 	m.spin = spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(sAccent))
-	m.prog = progress.New(progress.WithSolidFill(string(accent.Dark)), progress.WithoutPercentage())
+	m.prog = progress.New(progress.WithSolidFill(accent.Dark), progress.WithoutPercentage())
 	m.tbl = table.New(table.WithFocused(true))
 	st := table.DefaultStyles()
 	st.Header = st.Header.BorderStyle(lipgloss.NormalBorder()).BorderForeground(line).BorderBottom(true).Bold(true).Foreground(muted)
@@ -321,6 +321,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "q" {
 				return m, tea.Quit
 			}
+		case scrBusy:
+			// Keys wait until the running operation finishes.
 		}
 	}
 	return m, nil
@@ -564,7 +566,7 @@ func (m Model) keyCert(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) add(fp string) (tea.Model, tea.Cmd) {
 	var cl []string
-	for _, s := range strings.Split(m.in[3].Value(), ",") {
+	for s := range strings.SplitSeq(m.in[3].Value(), ",") {
 		if s = strings.TrimSpace(s); s != "" {
 			cl = append(cl, s)
 		}

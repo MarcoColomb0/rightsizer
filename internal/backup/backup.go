@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 )
 
 const (
@@ -25,61 +27,52 @@ func Create(dataDir, dst string) error {
 	if !strings.HasPrefix(filepath.Base(dst), prefix) || !strings.HasSuffix(dst, ".tar.gz") {
 		return fmt.Errorf("backup file name must match %s*.tar.gz", prefix)
 	}
-	tmp := dst + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// Reading through os.Root keeps a file swapped for a symlink during the
+	// walk from pulling in anything outside dataDir.
+	root, err := os.OpenRoot(dataDir)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
+	defer root.Close()
 	n := 0
-	err = filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.Type().IsRegular() || strings.HasSuffix(path, ".tmp") {
+	err = atomicfile.Write(dst, 0o600, func(w io.Writer) error {
+		gz := gzip.NewWriter(w)
+		tw := tar.NewWriter(gz)
+		err := fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.Type().IsRegular() || strings.HasSuffix(path, ".tmp") {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			hdr := &tar.Header{Name: path, Mode: 0o600, Size: info.Size(), ModTime: info.ModTime(), Typeflag: tar.TypeReg}
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			src, err := root.Open(path)
+			if err != nil {
+				return err
+			}
+			defer src.Close()
+			if _, err := io.Copy(tw, src); err != nil {
+				return err
+			}
+			n++
 			return nil
-		}
-		rel, err := filepath.Rel(dataDir, path)
+		})
 		if err != nil {
 			return err
 		}
-		info, err := d.Info()
-		if err != nil {
+		if err := tw.Close(); err != nil {
 			return err
 		}
-		hdr := &tar.Header{Name: filepath.ToSlash(rel), Mode: 0o600, Size: info.Size(), ModTime: info.ModTime(), Typeflag: tar.TypeReg}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		src, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer src.Close()
-		if _, err := io.Copy(tw, src); err != nil {
-			return err
-		}
-		n++
-		return nil
+		return gz.Close()
 	})
-	if err == nil {
-		err = tw.Close()
-	}
-	if err == nil {
-		err = gz.Close()
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
 	if err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, dst); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "backed up %d files to %s\n", n, dst)
@@ -153,6 +146,11 @@ func extract(src, dst string) error {
 	if err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(gz)
 	var total int64
 	for {
@@ -174,11 +172,10 @@ func extract(src, dst string) error {
 		if total > maxBytes {
 			return errors.New("archive too large")
 		}
-		out := filepath.Join(dst, name)
-		if err := os.MkdirAll(filepath.Dir(out), 0o700); err != nil {
+		if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 			return err
 		}
-		w, err := os.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+		w, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 		if err != nil {
 			return err
 		}

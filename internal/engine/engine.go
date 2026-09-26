@@ -213,7 +213,7 @@ func (e *Engine) migrateLegacy() error {
 func preserve(path string, cause error) error {
 	kept := fmt.Sprintf("%s.unreadable-%s", path, time.Now().Format("20060102-150405"))
 	if err := os.Rename(path, kept); err != nil {
-		return fmt.Errorf("cannot load %s (%v) and cannot preserve it: %w", path, cause, err)
+		return fmt.Errorf("cannot load %s (%w) and cannot preserve it: %w", path, cause, err)
 	}
 	slog.Error("state unreadable, kept a copy", "err", cause, "copy", kept)
 	return nil
@@ -306,8 +306,7 @@ func (e *Engine) Add(ctx context.Context, cfg Config, password string) (string, 
 	if e.vault != nil {
 		if err := e.vault.Put(id, vault.Secret{User: cfg.User, Password: password}); err != nil {
 			cl.Close(ctx)
-			os.RemoveAll(s.dir)
-			return "", err
+			return "", errors.Join(err, os.RemoveAll(s.dir))
 		}
 	}
 	e.mu.Lock()
@@ -465,7 +464,7 @@ func (e *Engine) LatestReport() (string, error) {
 	var bt time.Time
 	_ = filepath.WalkDir(e.dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".pdf") {
-			return nil
+			return nil //nolint:nilerr // unreadable entries are skipped; the newest readable report wins
 		}
 		if fi, err := d.Info(); err == nil && fi.ModTime().After(bt) {
 			best, bt = p, fi.ModTime()

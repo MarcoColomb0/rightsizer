@@ -52,11 +52,12 @@ func main() {
 	case "export":
 		err = export()
 	case "backup", "restore":
-		if len(os.Args) != 3 {
+		switch {
+		case len(os.Args) != 3:
 			err = fmt.Errorf("usage: rightsizer %s <file.tar.gz>", cmd)
-		} else if cmd == "backup" {
+		case cmd == "backup":
 			err = backup.Create(dataDir(), os.Args[2])
-		} else {
+		default:
 			err = backup.Restore(os.Args[2], dataDir())
 		}
 	case "version", "--version", "-v":
@@ -106,7 +107,7 @@ func runDaemon() error {
 	if err := os.MkdirAll(dataDir(), 0o700); err != nil {
 		return err
 	}
-	if err := os.Chmod(dataDir(), 0o700); err != nil {
+	if err := os.Chmod(dataDir(), 0o700); err != nil { // #nosec G302 -- a directory needs the x bit
 		return err
 	}
 	hours, err := strconv.Atoi(env("RIGHTSIZER_SHARE_HOURS", "24"))
@@ -197,7 +198,13 @@ func bootstrap(v *vault.Vault) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(path)
+	// The file holds the password in the clear: a failed delete must not go
+	// unnoticed, but must not keep the engine from starting either.
+	defer func() {
+		if err := os.Remove(path); err != nil {
+			slog.Error("cannot delete the bootstrap password file, delete it by hand", "path", path, "err", err)
+		}
+	}()
 	pw := strings.TrimRight(string(b), "\r\n")
 	if err := v.Reset(pw); err != nil {
 		slog.Error("administrator password from vApp options rejected", "err", err)
@@ -222,7 +229,7 @@ func writeFingerprint(keyPath string) error {
 func runTUI() error {
 	c := ipc.NewClient(socket())
 	if _, err := c.Summary(); err != nil {
-		return fmt.Errorf("engine not running (%v). Start it with: rightsizer start", err)
+		return fmt.Errorf("engine not running, start it with `rightsizer start`: %w", err)
 	}
 	m, err := tea.NewProgram(tui.New(c, tui.Options{
 		Version:    version,
@@ -233,7 +240,7 @@ func runTUI() error {
 	if err != nil {
 		return err
 	}
-	if m.(tui.Model).UpgradeRequested() {
+	if tm, ok := m.(tui.Model); ok && tm.UpgradeRequested() {
 		os.Exit(tui.ExitUpgrade)
 	}
 	return nil

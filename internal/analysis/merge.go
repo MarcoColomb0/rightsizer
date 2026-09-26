@@ -16,7 +16,7 @@ func Merge(rs []*Result) *Result {
 	out := &Result{Generated: time.Now(), Final: true}
 	var names []string
 	for i, r := range rs {
-		src := strings.SplitN(r.VCenter, " ", 2)[0]
+		src, _, _ := strings.Cut(r.VCenter, " ")
 		names = append(names, src)
 		if i == 0 || r.Start.Before(out.Start) {
 			out.Start = r.Start
@@ -81,7 +81,7 @@ func MergeSizing(ss []*Sizing) *Sizing {
 	var covered float64
 	var readW, sizeW, iopsW float64
 	for i, s := range ss {
-		src := strings.SplitN(s.VCenter, " ", 2)[0]
+		src, _, _ := strings.Cut(s.VCenter, " ")
 		names = append(names, src)
 		if i == 0 {
 			out.Params, out.Percentile, out.Start, out.EstateTaken = s.Params, s.Percentile, s.Start, s.EstateTaken

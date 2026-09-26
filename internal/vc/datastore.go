@@ -99,6 +99,8 @@ func (c *Client) searchDisks(ctx context.Context, ds Datastore) ([]OrphanDisk, e
 // waitTask polls the task through plain property reads, so no extra vSphere
 // methods have to be allowed.
 func (c *Client) waitTask(ctx context.Context, ref types.ManagedObjectReference) (*types.TaskInfo, error) {
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
 		var t mo.Task
 		if err := c.retrieveOne(ctx, ref, []string{"info"}, &t); err != nil {
@@ -115,11 +117,12 @@ func (c *Client) waitTask(ctx context.Context, ref types.ManagedObjectReference)
 				return nil, errors.New(t.Info.Error.LocalizedMessage)
 			}
 			return nil, errors.New("task failed")
+		case types.TaskInfoStateQueued, types.TaskInfoStateRunning:
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Second):
+		case <-tick.C:
 		}
 	}
 }

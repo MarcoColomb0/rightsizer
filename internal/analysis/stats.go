@@ -27,10 +27,23 @@ func (h *Hist) AddN(v float64, n uint64) {
 		return
 	}
 	v = min(v, 100)
-	h.B[int(v*2)] += uint32(n)
+	i := int(v * 2)
+	h.B[i] = addCount(h.B[i], n)
 	h.N += n
 	h.Sum += v * float64(n)
 	h.Max = max(h.Max, v)
+}
+
+// addCount adds n samples to a bucket, saturating instead of wrapping.
+func addCount(c uint32, n uint64) uint32 {
+	if n > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	sum := uint64(c) + n
+	if sum > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return uint32(sum)
 }
 
 func (h *Hist) Pct(p float64) float64 {

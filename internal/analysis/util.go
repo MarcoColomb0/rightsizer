@@ -15,7 +15,7 @@ func Downsample(p []Point, n int) []Point {
 	}
 	out := make([]Point, 0, n)
 	step := float64(len(p)) / float64(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lo, hi := int(float64(i)*step), int(float64(i+1)*step)
 		var cpu, mem float64
 		for _, x := range p[lo:hi] {

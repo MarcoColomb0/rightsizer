@@ -138,13 +138,13 @@ type errorBody struct{ Error string }
 // appliance.
 func Serve(ctx context.Context, sock string, b Local) error {
 	_ = os.Remove(sock)
-	ln, err := net.Listen("unix", sock)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "unix", sock)
 	if err != nil {
 		return err
 	}
 	if err := os.Chmod(sock, 0o600); err != nil {
-		ln.Close()
-		return err
+		return errors.Join(err, ln.Close())
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /summary", func(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +232,7 @@ func Serve(ctx context.Context, sock string, b Local) error {
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
@@ -281,7 +281,7 @@ func (c *Client) call(method, path string, in, out any) error {
 		}
 		body = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, "http://rightsizer"+path, body)
+	req, err := http.NewRequestWithContext(context.Background(), method, "http://rightsizer"+path, body)
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,9 @@ func (c *Client) call(method, path string, in, out any) error {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		var eb errorBody
-		_ = json.NewDecoder(res.Body).Decode(&eb)
+		if err := json.NewDecoder(res.Body).Decode(&eb); err != nil || eb.Error == "" {
+			return fmt.Errorf("rightsizer daemon: %s", res.Status)
+		}
 		return errors.New(eb.Error)
 	}
 	if out != nil {

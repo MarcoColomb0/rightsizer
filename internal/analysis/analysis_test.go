@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 
 func TestHistPct(t *testing.T) {
 	var h Hist
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		h.Add(float64(i))
 	}
 	if p := h.Pct(95); p < 94 || p > 95.5 {
@@ -22,7 +23,7 @@ func TestHistPct(t *testing.T) {
 }
 
 func feed(s *VMStats, cpu, mem float64, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		s.CPU.Add(cpu)
 		s.Mem.Add(mem)
 		s.Net.Add(100)
@@ -59,7 +60,7 @@ func TestRightsize(t *testing.T) {
 	}
 
 	idle := &VMStats{}
-	for i := 0; i < 5000; i++ {
+	for range 5000 {
 		idle.CPU.Add(0.5)
 		idle.Mem.Add(3)
 		idle.Samples++
@@ -107,6 +108,23 @@ func TestFindingsOrderedByCriticality(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order\n got %v\nwant %v", got, want)
+		}
+	}
+}
+
+func TestAddCountSaturates(t *testing.T) {
+	for _, tc := range []struct {
+		c    uint32
+		n    uint64
+		want uint32
+	}{
+		{1, 2, 3},
+		{math.MaxUint32 - 1, 1, math.MaxUint32},
+		{math.MaxUint32 - 1, 5, math.MaxUint32},
+		{0, math.MaxUint64, math.MaxUint32},
+	} {
+		if got := addCount(tc.c, tc.n); got != tc.want {
+			t.Errorf("addCount(%d, %d) = %d, want %d", tc.c, tc.n, got, tc.want)
 		}
 	}
 }

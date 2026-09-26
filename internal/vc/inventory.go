@@ -114,7 +114,7 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer v.Destroy(context.WithoutCancel(ctx))
+	defer destroy(ctx, v)
 
 	crName, err := computeResources(ctx, v)
 	if err != nil {
@@ -176,6 +176,12 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 		inv.Datastores = append(inv.Datastores, ds)
 	}
 	return inv, nil
+}
+
+// destroy releases a container view. vCenter also frees views at logout, so
+// a failure here only delays that.
+func destroy(ctx context.Context, v *view.ContainerView) {
+	_ = v.Destroy(context.WithoutCancel(ctx))
 }
 
 // computeResources maps clusters and standalone hosts' compute resources to

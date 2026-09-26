@@ -137,7 +137,7 @@ func (c *Client) Estate(ctx context.Context) (*Estate, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer v.Destroy(context.WithoutCancel(ctx))
+	defer destroy(ctx, v)
 
 	crName, err := computeResources(ctx, v)
 	if err != nil {
@@ -354,7 +354,7 @@ func wwn(v int64) string {
 	if v == 0 {
 		return ""
 	}
-	s := fmt.Sprintf("%016x", uint64(v))
+	s := fmt.Sprintf("%016x", uint64(v)) // #nosec G115 -- the WWN's 64 bits, shown in hex
 	parts := make([]string, 0, 8)
 	for i := 0; i < 16; i += 2 {
 		parts = append(parts, s[i:i+2])

@@ -317,7 +317,7 @@ func connectivity(hosts []vc.HostDetail, cluster string) Connectivity {
 			gpus[g.Name]++
 		}
 	}
-	c.NICs = countList(nics, func(mb int) string { return speedLabel(mb) })
+	c.NICs = countList(nics, speedLabel)
 	c.HBAs = countList(hbas, func(s string) string { return s })
 	c.GPUs = countList(gpus, func(s string) string { return s })
 	var ms []int

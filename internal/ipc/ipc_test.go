@@ -31,7 +31,7 @@ func TestSizingOverSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir, err := os.MkdirTemp("", "rs")
+	dir, err := os.MkdirTemp("", "rs") //nolint:usetesting // a unix socket path must stay under 104 bytes on macOS; t.TempDir() is longer
 	if err != nil {
 		t.Fatal(err)
 	}

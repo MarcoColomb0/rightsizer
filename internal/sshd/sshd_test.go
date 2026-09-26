@@ -23,7 +23,11 @@ func (hello) View() string {
 
 func start(t *testing.T) string {
 	t.Helper()
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	ln, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	addr := ln.Addr().String()
 	ln.Close()
 	srv, err := New(Config{
@@ -40,10 +44,11 @@ func start(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go srv.ListenAndServe()
+	go func() { _ = srv.ListenAndServe() }()
 	t.Cleanup(func() { srv.srv.Close() })
-	for i := 0; i < 50; i++ {
-		if c, err := net.Dial("tcp", addr); err == nil {
+	for range 50 {
+		var d net.Dialer
+		if c, err := d.DialContext(t.Context(), "tcp", addr); err == nil {
 			c.Close()
 			break
 		}
@@ -129,7 +134,7 @@ func TestHostKeyIsKept(t *testing.T) {
 
 func TestLockout(t *testing.T) {
 	addr := start(t)
-	for i := 0; i < maxFails; i++ {
+	for range maxFails {
 		if _, err := dial(addr, User, "wrong"); err == nil {
 			t.Fatal("wrong password accepted")
 		}

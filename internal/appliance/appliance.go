@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
+
 	"github.com/MarcoColomb0/rightsizer/internal/version"
 )
 
@@ -106,11 +108,7 @@ func (h Host) RequestUpgrade(tag string) error {
 	if err := os.MkdirAll(h.Dir, 0o700); err != nil {
 		return err
 	}
-	tmp := filepath.Join(h.Dir, ".upgrade-request")
-	if err := os.WriteFile(tmp, []byte(tag+"\n"), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(h.Dir, "upgrade-request"))
+	return atomicfile.WriteFile(filepath.Join(h.Dir, "upgrade-request"), []byte(tag+"\n"), 0o600)
 }
 
 // bootIDPath is shared with the host kernel, so the engine container sees the
@@ -154,11 +152,7 @@ func (h Host) RequestReboot() error {
 	if err := os.MkdirAll(h.Dir, 0o700); err != nil {
 		return err
 	}
-	tmp := filepath.Join(h.Dir, ".reboot-request")
-	if err := os.WriteFile(tmp, []byte("reboot\n"), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(h.Dir, "reboot-request"))
+	return atomicfile.WriteFile(filepath.Join(h.Dir, "reboot-request"), []byte("reboot\n"), 0o600)
 }
 
 func (h Host) Status() *UpgradeStatus {

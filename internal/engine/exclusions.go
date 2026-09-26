@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
+
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 )
 
@@ -41,11 +43,7 @@ func (e *Engine) saveExclusions() error {
 	if err != nil {
 		return err
 	}
-	tmp := e.exclusionsPath() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, e.exclusionsPath())
+	return atomicfile.WriteFile(e.exclusionsPath(), b, 0o600)
 }
 
 // Exclusions lists every exclusion across all vCenters.

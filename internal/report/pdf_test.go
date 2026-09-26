@@ -25,11 +25,11 @@ func demoInput() analysis.Input {
 	inv := &vc.Inventory{Taken: end}
 	st := analysis.NewStore(start)
 	for c, name := range []string{"prod-cl01", "prod-cl02", "dmz-cl01"} {
-		for h := 0; h < 4+2*(1-c/2); h++ {
+		for h := range 4 + 2*(1-c/2) {
 			inv.Hosts = append(inv.Hosts, vc.Host{Ref: fmt.Sprintf("host-%d-%d", c, h), Name: fmt.Sprintf("esx%02d.%s", h+1, name), Cluster: name,
 				CPUModel: "Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz", Sockets: 2, Cores: 64, NUMANodes: 2, MHz: 2000, MemBytes: 1024 << 30, Connected: true})
 		}
-		for v := 0; v < 25; v++ {
+		for v := range 25 {
 			vm := vc.VM{Ref: fmt.Sprintf("vm-%d-%d", c, v), Name: fmt.Sprintf("%s-%s%02d", strings.ReplaceAll(name, "-cl", ""), []string{"web", "app", "db", "svc"}[v%4], v+1), Cluster: name,
 				GuestOS: "Red Hat Enterprise Linux 9", PowerOn: v%11 != 10, VCPU: []int{2, 4, 8, 16}[rng.IntN(4)], MemMB: []int{4096, 8192, 16384, 32768, 65536}[rng.IntN(5)],
 				Host: fmt.Sprintf("esx%02d.%s", v%4+1, name), CoresPerSock: 1,
@@ -54,7 +54,7 @@ func demoInput() analysis.Input {
 			}
 			night := v%4 == 3
 			s := &analysis.VMStats{First: start, Last: end}
-			for i := 0; i < 60000; i++ {
+			for i := range 60000 {
 				d := math.Sin(float64(i)/4320*2*math.Pi)*0.5 + 0.5
 				s.CPU.Add(base * (0.4 + d + rng.Float64()*0.4))
 				s.Mem.Add(memb * (0.9 + rng.Float64()*0.2))
@@ -67,7 +67,7 @@ func demoInput() analysis.Input {
 				s.Ready.Add(rng.Float64() * 3)
 				s.Samples++
 			}
-			for slot := 0; slot < 14*48; slot++ {
+			for slot := range 14 * 48 {
 				hour := float64(slot%48) / 2
 				d := math.Max(0, math.Sin((hour-6)/12*math.Pi))
 				if night {

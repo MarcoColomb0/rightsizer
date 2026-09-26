@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -166,9 +169,7 @@ func (v *Vault) update(fn func(map[string]Secret)) error {
 		return err
 	}
 	next := make(map[string]Secret, len(v.sec)+1)
-	for k, s := range v.sec {
-		next[k] = s
-	}
+	maps.Copy(next, v.sec)
 	fn(next)
 	if err := v.seal(v.key, f, next); err != nil {
 		return err
@@ -193,7 +194,7 @@ func (v *Vault) seal(key []byte, f *file, sec map[string]Secret) error {
 	if err != nil {
 		return err
 	}
-	plain, err := json.Marshal(sec)
+	plain, err := json.Marshal(sec) // #nosec G117 -- sealed with XChaCha20-Poly1305 below, never stored in the clear
 	if err != nil {
 		return err
 	}
@@ -206,11 +207,7 @@ func (v *Vault) seal(key []byte, f *file, sec map[string]Secret) error {
 	if err != nil {
 		return err
 	}
-	tmp := v.path() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, v.path())
+	return atomicfile.WriteFile(v.path(), b, 0o600)
 }
 
 func (v *Vault) read() (*file, error) {
