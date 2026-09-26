@@ -4,18 +4,33 @@
 # administrator can log in, and nothing but the console is offered.
 #
 #   appliance/smoke-test.sh <engine-image> [upgrade-image]
+#   appliance/smoke-test.sh --fetch     # only download the Flatcar image
 #
 # With an upgrade image (tag 0.0.1, whose host bundle adds a kernel
 # argument), the test also upgrades the running appliance and restarts it.
 set -euo pipefail
 
-ENGINE="${1:?usage: smoke-test.sh <engine-image> [upgrade-image]}"
-UPGRADE="${2:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 . "$HERE/flatcar.env"
 WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
+base="https://${FLATCAR_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"
+fetch() {
+	if [ ! -f "$WORK/flatcar.img" ]; then
+		curl -fsSL --retry 3 -o "$WORK/flatcar.img.part" "$base/flatcar_production_qemu_image.img"
+		curl -fsSL --retry 3 -o "$WORK/flatcar.img.sig" "$base/flatcar_production_qemu_image.img.sig"
+		mv "$WORK/flatcar.img.part" "$WORK/flatcar.img"
+	fi
+}
+# --fetch only downloads the Flatcar image, so CI can do it while it builds;
+# the signature is still verified below before the image is used.
+if [ "${1:-}" = "--fetch" ]; then
+	fetch
+	exit 0
+fi
+ENGINE="${1:?usage: smoke-test.sh <engine-image> [upgrade-image] | --fetch}"
+UPGRADE="${2:-}"
 PW='ci & admin password'
 PORT=2222
 cleanup() {
@@ -25,11 +40,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-base="https://${FLATCAR_CHANNEL}.release.flatcar-linux.net/amd64-usr/${FLATCAR_VERSION}"
-if [ ! -f "$WORK/flatcar.img" ]; then
-	curl -fsSL --retry 3 -o "$WORK/flatcar.img" "$base/flatcar_production_qemu_image.img"
-	curl -fsSL --retry 3 -o "$WORK/flatcar.img.sig" "$base/flatcar_production_qemu_image.img.sig"
-fi
+fetch
 export GNUPGHOME="$WORK/gnupg"
 mkdir -p "$GNUPGHOME"
 chmod 0700 "$GNUPGHOME"

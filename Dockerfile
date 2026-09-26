@@ -3,10 +3,12 @@ FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS build
 ARG TARGETOS TARGETARCH VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN --mount=type=cache,target=/go/pkg/mod go mod download && go mod verify
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+# The build cache lets a rebuild with another VERSION only relink.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -X main.version=${VERSION}" \
       -o /out/rightsizer ./cmd/rightsizer \
  && mkdir -p /out/data /out/backup
