@@ -23,14 +23,31 @@ rightsizer watches your VMware vCenters for 24 hours to 14 days, compares what e
 
 ## Showcase
 
-| | |
-| :---: | :---: |
-| ![Every vCenter on one screen](docs/images/home.png) | ![Totals, clusters and CPU trends](docs/images/overview.png) |
-| Every vCenter on one screen | Totals, clusters and CPU trends |
-| ![Findings with vim-style search](docs/images/findings.png) | ![When each cluster is busy](docs/images/peaks.png) |
-| Findings with vim-style search | When each cluster is busy |
-| ![Hardware refresh sizing](docs/images/sizing.png) | ![Adding a vCenter](docs/images/add.png) |
-| Hardware refresh sizing | Adding a vCenter |
+**Every vCenter on one screen**
+
+![Every vCenter on one screen](docs/images/home.png)
+
+**Totals, clusters and CPU trends**
+
+![Totals, clusters and CPU trends](docs/images/overview.png)
+
+**Findings with vim-style search**
+
+![Findings with vim-style search](docs/images/findings.png)
+
+**When each cluster is busy**
+
+![When each cluster is busy](docs/images/peaks.png)
+
+**Hardware refresh sizing**
+
+![Hardware refresh sizing](docs/images/sizing.png)
+
+**Adding a vCenter**
+
+![Adding a vCenter](docs/images/add.png)
+
+**PDF reports**
 
 ![PDF reports](docs/images/reports.png)
 
