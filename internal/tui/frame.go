@@ -75,6 +75,11 @@ func (m Model) View() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = m.windowTitle()
 	v.ProgressBar = m.osProgress()
+	if m.bgKnown {
+		// Paint the terminal in the theme's colours once its background is
+		// known, so unstyled text matches the palette.
+		v.ForegroundColor, v.BackgroundColor = m.th.text, m.th.bg
+	}
 	return v
 }
 

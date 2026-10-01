@@ -17,8 +17,6 @@ var (
 	slateBlue      = lipgloss.Color("#7364D2")
 	violetTwilight = lipgloss.Color("#613DC1")
 	rebeccaPurple  = lipgloss.Color("#5829A7")
-	indigo         = lipgloss.Color("#4E148C")
-	deepIndigo     = lipgloss.Color("#461177")
 	darkAmethyst   = lipgloss.Color("#3D0E61")
 )
 
@@ -27,9 +25,9 @@ var (
 type theme struct {
 	dark bool
 
-	text, muted, subtle, border, surface, sel color.Color
-	accent, good, warn, bad, info             color.Color
-	onAccent                                  color.Color
+	bg, text, muted, subtle, border, surface, sel, track color.Color
+	accent, good, warn, bad, info                        color.Color
+	onAccent                                             color.Color
 	// grad colours text, rules and borders; fills is the background of
 	// filled elements, readable under onAccent.
 	grad, fills, heatStops []color.Color
@@ -44,16 +42,18 @@ func newTheme(dark bool) theme {
 	c := lipgloss.Color
 	t := theme{
 		dark:     dark,
+		bg:       ld(c("#FCFBFF"), c("#13111E")),
 		text:     ld(c("#1E1A33"), c("#E9E8F7")),
 		muted:    ld(c("#5D5880"), c("#A3A6D4")),
-		subtle:   ld(c("#9F99C6"), c("#5D5791")),
-		border:   ld(c("#D9D5EF"), c("#383257")),
-		surface:  ld(c("#F3F1FB"), c("#1D1934")),
-		sel:      ld(c("#E3F5FE"), darkAmethyst),
+		subtle:   ld(c("#8F89B8"), c("#5D5791")),
+		border:   ld(c("#DDD9F2"), c("#383257")),
+		surface:  ld(c("#F2F0FB"), c("#1D1934")),
+		sel:      ld(c("#ECE9FB"), darkAmethyst),
+		track:    ld(c("#E3E0F4"), c("#2E2950")),
 		accent:   ld(violetTwilight, frozenLake),
-		good:     ld(c("#1A7F37"), c("#4ADE80")),
-		warn:     ld(c("#9A6700"), c("#FBBF24")),
-		bad:      ld(c("#CF222E"), c("#F87171")),
+		good:     ld(c("#15803D"), c("#4ADE80")),
+		warn:     ld(c("#B45309"), c("#FBBF24")),
+		bad:      ld(c("#C2334D"), c("#F87171")),
 		info:     ld(slateBlue, skyBlue),
 		onAccent: ld(c("#FFFFFF"), darkAmethyst),
 	}
@@ -62,9 +62,9 @@ func newTheme(dark bool) theme {
 		t.fills = []color.Color{frozenLake, babyBlueIce, softPeriwinkle}
 		t.heatStops = []color.Color{darkAmethyst, violetTwilight, softPeriwinkle, frozenLake, t.warn, t.bad}
 	} else {
-		t.grad = []color.Color{slateBlue, violetTwilight, rebeccaPurple, indigo, darkAmethyst}
-		t.fills = []color.Color{violetTwilight, rebeccaPurple, deepIndigo}
-		t.heatStops = []color.Color{c("#E3F5FE"), babyBlueIce, softPeriwinkle, violetTwilight, t.warn, t.bad}
+		t.grad = []color.Color{slateBlue, violetTwilight, rebeccaPurple}
+		t.fills = []color.Color{slateBlue, violetTwilight}
+		t.heatStops = []color.Color{t.sel, babyBlueIce, softPeriwinkle, violetTwilight, t.warn, t.bad}
 	}
 	s := lipgloss.NewStyle
 	t.bold = s().Bold(true).Foreground(t.text)

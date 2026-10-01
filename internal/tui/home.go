@@ -195,7 +195,7 @@ func (m Model) miniBar(frac float64, ph engine.Phase, w int) string {
 	case engine.Running:
 	}
 	p := progress.New(progress.WithColors(cs...), progress.WithoutPercentage(), progress.WithFillCharacters('━', '━'), progress.WithWidth(w))
-	p.EmptyColor = t.subtle
+	p.EmptyColor = t.track
 	return p.ViewAs(frac)
 }
 

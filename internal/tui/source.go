@@ -219,7 +219,7 @@ func (t theme) ratioBar(f float64, w int) string {
 		return ""
 	}
 	n := int(min(max(f, 0), 1)*float64(w) + 0.5)
-	return t.gradient(strings.Repeat("━", n), false) + t.faint.Render(strings.Repeat("━", w-n))
+	return t.gradient(strings.Repeat("━", n), false) + lipgloss.NewStyle().Foreground(t.track).Render(strings.Repeat("━", w-n))
 }
 
 var sparks = []rune("▁▂▃▄▅▆▇█")

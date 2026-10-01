@@ -19,10 +19,15 @@ import (
 // as ANSI text for a look with a terminal or freeze.
 func TestScreens(t *testing.T) {
 	dir := os.Getenv("RIGHTSIZER_TUI_SHOTS")
-	for _, c := range []struct {
+	type size struct {
 		w, h int
 		dark bool
-	}{{130, 40, true}, {100, 30, false}, {200, 55, true}} {
+	}
+	sizes := []size{{130, 40, true}, {100, 30, false}, {200, 55, true}}
+	if dir != "" {
+		sizes = append(sizes, size{130, 40, false}, size{100, 30, true}, size{200, 55, false})
+	}
+	for _, c := range sizes {
 		size, dark := [2]int{c.w, c.h}, c.dark
 		{
 			shots := screens(t, size[0], size[1], dark)

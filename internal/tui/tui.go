@@ -143,6 +143,7 @@ type Model struct {
 	pwFocus  int
 
 	asked, upgrade bool
+	bgKnown        bool
 
 	ex     excludeForm
 	exNote textarea.Model
@@ -307,6 +308,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	case tea.BackgroundColorMsg:
+		m.bgKnown = true
 		m.applyTheme(msg.IsDark())
 		m.syncViewport()
 		return m, nil
