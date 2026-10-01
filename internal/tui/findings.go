@@ -119,7 +119,7 @@ func (m Model) findingsView() (string, []zone) {
 		zones = append(zones, zone{"row:" + strconv.Itoa(i), 0, 3 + i - tb.offset, m.bodyW() - 1, 3 + i - tb.offset})
 	}
 	table.StyleFunc(func(row, col int) lipgloss.Style {
-		s := lipgloss.NewStyle().Padding(0, 1)
+		s := lipgloss.NewStyle().Padding(0, 1).Foreground(t.text)
 		if row == ltable.HeaderRow {
 			return s.Foreground(t.muted).Bold(true)
 		}

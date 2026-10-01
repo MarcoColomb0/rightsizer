@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ var logoLines = []string{
 func (t theme) logo() string {
 	out := make([]string, len(logoLines))
 	for i, l := range logoLines {
-		out[i] = t.blend(l, true, t.accent, t.accent2)
+		out[i] = t.gradient(l, true)
 	}
 	return strings.Join(out, "\n")
 }
@@ -185,15 +186,15 @@ func (m Model) deltaText(a, b int) string {
 
 func (m Model) miniBar(frac float64, ph engine.Phase, w int) string {
 	t := m.th
-	c1, c2 := t.accent, t.accent2
+	cs := t.grad
 	switch ph {
 	case engine.NeedPassword:
-		c1, c2 = t.warn, t.bad
+		cs = []color.Color{t.warn, t.bad}
 	case engine.Done:
-		c1, c2 = t.good, t.accent
+		cs = []color.Color{t.good, t.accent}
 	case engine.Running:
 	}
-	p := progress.New(progress.WithColors(c1, c2), progress.WithoutPercentage(), progress.WithFillCharacters('━', '━'), progress.WithWidth(w))
+	p := progress.New(progress.WithColors(cs...), progress.WithoutPercentage(), progress.WithFillCharacters('━', '━'), progress.WithWidth(w))
 	p.EmptyColor = t.subtle
 	return p.ViewAs(frac)
 }

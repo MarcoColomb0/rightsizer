@@ -247,7 +247,7 @@ func (m Model) clustersTable(r *analysis.Result, w int) string {
 	tb := ltable.New().Border(lipgloss.RoundedBorder()).BorderStyle(t.faint).BorderColumn(false).
 		Headers("Cluster", "Hosts", "CPU p/peak", "Mem p", "vCPU", "Memory", "Need", "Div", "CPU trend").
 		StyleFunc(func(row, col int) lipgloss.Style {
-			s := lipgloss.NewStyle().Padding(0, 1)
+			s := lipgloss.NewStyle().Padding(0, 1).Foreground(t.text)
 			if row == ltable.HeaderRow {
 				return s.Foreground(t.muted).Bold(true)
 			}

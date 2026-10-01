@@ -2,9 +2,24 @@ package tui
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+)
+
+// Twilight palette: ice blues fading into violets.
+var (
+	frozenLake     = lipgloss.Color("#97DFFC")
+	skyBlue        = lipgloss.Color("#93CAF6")
+	babyBlueIce    = lipgloss.Color("#8EB5F0")
+	softPeriwinkle = lipgloss.Color("#858AE3")
+	slateBlue      = lipgloss.Color("#7364D2")
+	violetTwilight = lipgloss.Color("#613DC1")
+	rebeccaPurple  = lipgloss.Color("#5829A7")
+	indigo         = lipgloss.Color("#4E148C")
+	deepIndigo     = lipgloss.Color("#461177")
+	darkAmethyst   = lipgloss.Color("#3D0E61")
 )
 
 // theme holds the palette and styles for a light or dark terminal. Bubble
@@ -13,9 +28,11 @@ type theme struct {
 	dark bool
 
 	text, muted, subtle, border, surface, sel color.Color
-	accent, accent2, good, warn, bad, info    color.Color
+	accent, good, warn, bad, info             color.Color
 	onAccent                                  color.Color
-	heatStops                                 []color.Color
+	// grad colours text, rules and borders; fills is the background of
+	// filled elements, readable under onAccent.
+	grad, fills, heatStops []color.Color
 
 	bold, mute, faint, acc, ok, wrn, err, inf lipgloss.Style
 	label, focusLabel, key, keyDesc           lipgloss.Style
@@ -27,21 +44,28 @@ func newTheme(dark bool) theme {
 	c := lipgloss.Color
 	t := theme{
 		dark:     dark,
-		text:     ld(c("#1F2328"), c("#E6EDF3")),
-		muted:    ld(c("#57606A"), c("#8B949E")),
-		subtle:   ld(c("#AFB8C1"), c("#3D444D")),
-		border:   ld(c("#D0D7DE"), c("#30363D")),
-		surface:  ld(c("#F6F8FA"), c("#161B22")),
-		sel:      ld(c("#D8F3EE"), c("#123B39")),
-		accent:   ld(c("#0F766E"), c("#2DD4BF")),
-		accent2:  ld(c("#6D28D9"), c("#A78BFA")),
-		good:     ld(c("#1A7F37"), c("#3FB950")),
+		text:     ld(c("#1E1A33"), c("#E9E8F7")),
+		muted:    ld(c("#5D5880"), c("#A3A6D4")),
+		subtle:   ld(c("#9F99C6"), c("#5D5791")),
+		border:   ld(c("#D9D5EF"), c("#383257")),
+		surface:  ld(c("#F3F1FB"), c("#1D1934")),
+		sel:      ld(c("#E3F5FE"), darkAmethyst),
+		accent:   ld(violetTwilight, frozenLake),
+		good:     ld(c("#1A7F37"), c("#4ADE80")),
 		warn:     ld(c("#9A6700"), c("#FBBF24")),
 		bad:      ld(c("#CF222E"), c("#F87171")),
-		info:     ld(c("#0969DA"), c("#60A5FA")),
-		onAccent: ld(c("#FFFFFF"), c("#0D1117")),
+		info:     ld(slateBlue, skyBlue),
+		onAccent: ld(c("#FFFFFF"), darkAmethyst),
 	}
-	t.heatStops = []color.Color{ld(c("#D8F3EE"), c("#123B39")), t.accent, t.warn, t.bad}
+	if dark {
+		t.grad = []color.Color{frozenLake, skyBlue, babyBlueIce, softPeriwinkle, slateBlue}
+		t.fills = []color.Color{frozenLake, babyBlueIce, softPeriwinkle}
+		t.heatStops = []color.Color{darkAmethyst, violetTwilight, softPeriwinkle, frozenLake, t.warn, t.bad}
+	} else {
+		t.grad = []color.Color{slateBlue, violetTwilight, rebeccaPurple, indigo, darkAmethyst}
+		t.fills = []color.Color{violetTwilight, rebeccaPurple, deepIndigo}
+		t.heatStops = []color.Color{c("#E3F5FE"), babyBlueIce, softPeriwinkle, violetTwilight, t.warn, t.bad}
+	}
 	s := lipgloss.NewStyle
 	t.bold = s().Bold(true).Foreground(t.text)
 	t.mute = s().Foreground(t.muted)
@@ -60,9 +84,9 @@ func newTheme(dark bool) theme {
 	return t
 }
 
-// gradient colours each character of s along the accent gradient.
+// gradient colours each character of s along the palette.
 func (t theme) gradient(s string, bold bool) string {
-	return t.blend(s, bold, t.accent, t.accent2)
+	return t.blend(s, bold, t.grad...)
 }
 
 func (t theme) blend(s string, bold bool, stops ...color.Color) string {
@@ -83,7 +107,7 @@ func (t theme) rule(w int) string {
 	if w <= 0 {
 		return ""
 	}
-	return t.blend(strings.Repeat("─", w), false, t.accent, t.accent2, t.subtle)
+	return t.blend(strings.Repeat("─", w), false, append(slices.Clone(t.grad), t.subtle)...)
 }
 
 // heat maps 0..1 to the cool-to-hot palette used for load.
@@ -114,13 +138,13 @@ func (t theme) button(label string, focused bool) string {
 	if !focused {
 		return lipgloss.NewStyle().Foreground(t.muted).Border(lipgloss.RoundedBorder()).BorderForeground(t.border).Padding(0, 2).Render(label)
 	}
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(t.accent, t.accent2).Render(t.fill("  " + label + "  "))
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForegroundBlend(t.grad...).Render(t.fill("  " + label + "  "))
 }
 
-// fill paints s on the accent gradient.
+// fill paints s on the palette.
 func (t theme) fill(s string) string {
 	r := []rune(s)
-	cs := lipgloss.Blend1D(max(len(r), 2), t.accent, t.accent2)
+	cs := lipgloss.Blend1D(max(len(r), 2), t.fills...)
 	var b strings.Builder
 	for i, ch := range r {
 		b.WriteString(lipgloss.NewStyle().Background(cs[i]).Foreground(t.onAccent).Bold(true).Render(string(ch)))
@@ -132,7 +156,7 @@ func (t theme) fill(s string) string {
 func (t theme) panel(w int, focused bool) lipgloss.Style {
 	s := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(w)
 	if focused {
-		return s.BorderForegroundBlend(t.accent, t.accent2)
+		return s.BorderForegroundBlend(t.grad...)
 	}
 	return s.BorderForeground(t.border)
 }
