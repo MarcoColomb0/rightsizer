@@ -19,4 +19,4 @@ demo: build
 	./rightsizer demo $(ARGS)
 
 demo-pdf:
-	RIGHTSIZER_DEMO_PDF=$(CURDIR)/demo.pdf go test -count=1 -run TestWritePDF ./internal/report/
+	RIGHTSIZER_DEMO_PDF=$(CURDIR)/demo.pdf RIGHTSIZER_DEMO_SIZING=$(CURDIR)/demo-sizing.pdf go test -count=1 -run 'TestWritePDF|TestWriteSizing' ./internal/report/

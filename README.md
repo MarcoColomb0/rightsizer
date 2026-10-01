@@ -170,7 +170,7 @@ make lint       # golangci-lint with the checks in .golangci.yml
 make build      # ./rightsizer
 make demo       # try the console with synthetic vCenters (ARGS="--appliance --update")
 make image      # rightsizer:local
-make demo-pdf   # sample report from synthetic data
+make demo-pdf   # sample reports from synthetic data (demo.pdf, demo-sizing.pdf)
 ```
 
 `appliance/smoke-test.sh` boots the appliance in QEMU, and `appliance/build.sh` builds the OVA. Releases are published by pushing a `vX.Y.Z` tag.
