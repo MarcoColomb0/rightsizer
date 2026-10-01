@@ -1,0 +1,14 @@
+# Security
+
+- **Read-only by construction.** Every vSphere call passes an allowlist of read methods, and anything else is blocked before it leaves the process. The only task it may start is a datastore file search. A test checks that power and delete operations are refused.
+- **Certificate pinning.** Self-signed vCenter certificates are accepted only after you confirm their SHA-256 fingerprint. After that, any other certificate is refused.
+- **Credentials.** On the appliance, vCenter passwords are encrypted with XChaCha20-Poly1305. The key is derived from the administrator password with Argon2id, and it exists only in memory after an administrator logs in. In the Docker install, passwords are never written to disk. Collection pauses after three failed vCenter logins, so a changed password can't lock the account.
+- **SSH console.** Only the `admin` user can log in, only with the administrator password. A terminal is required, and commands, sftp, agent and port forwarding are refused. Only modern key exchanges and ciphers are offered. An address is locked out after five failed attempts in 15 minutes.
+- **Appliance host.** Built on [Flatcar Container Linux](https://www.flatcar.org) LTS, whose OS image is signature-verified at build time. It has an immutable `/usr`, automatic A/B OS updates that apply on the next restart, and no user accounts you can log in to. Upgrades can only replace a fixed list of appliance files, all replaced atomically and rolled back together with the engine if the new version fails. Host SSH, every login prompt, the serial and debug shells, console autologin and Ctrl-Alt-Del are disabled. The VM console only shows status. Kernel and network settings are hardened, and guest copy, paste and device changes are disabled.
+- **Short-lived downloads.** The report server listens only while a report is shared. Each report has its own random 192-bit link, a fresh self-signed certificate is used, and links expire after 24 hours.
+- **Minimal container.** The engine image is built `FROM scratch` and holds only a static binary and a CA bundle, about 6 MB compressed. It runs as a non-root user with a read-only file system, no capabilities and `no-new-privileges`, and it never gets access to the Docker socket.
+- **Supply chain.** CI tests every change, boots the appliance in QEMU and attacks its console, and scans images with Trivy. Each release has SBOM and provenance attestations, and the installer and OVA are published with checksums.
+
+A vSphere administrator who can manage the appliance VM can read its disks. On the appliance, stored vCenter credentials stay encrypted, but collected utilisation data does not.
+
+Please report vulnerabilities privately through [GitHub security advisories](https://github.com/MarcoColomb0/rightsizer/security/advisories/new).
