@@ -24,25 +24,13 @@ const (
 
 var Version = "dev"
 
-type rgb struct{ r, g, b int }
-
-var (
-	cInk    = rgb{24, 32, 38}
-	cMuted  = rgb{100, 112, 122}
-	cAccent = rgb{15, 118, 110}
-	cWarn   = rgb{194, 120, 3}
-	cBad    = rgb{190, 40, 50}
-	cRule   = rgb{222, 226, 230}
-	cBand   = rgb{244, 247, 248}
-	cProv   = rgb{160, 170, 178}
-)
-
 type doc struct {
 	*fpdf.Fpdf
 	tr     func(string) string
 	r      *analysis.Result
 	title  string
 	source string
+	sec    int
 }
 
 const (
@@ -59,6 +47,8 @@ func newDoc(title, source string, created time.Time) *doc {
 	p.SetAuthor("rightsizer by "+Author, true)
 	p.SetCreator("rightsizer "+Version, true)
 	p.SetCreationDate(created)
+	p.SetSubject(title+" for "+source, true)
+	p.SetLang("en")
 	p.AliasNbPages("{nb}")
 	p.AddUTF8FontFromBytes("Go", "", goregular.TTF)
 	p.AddUTF8FontFromBytes("Go", "B", gobold.TTF)
@@ -93,133 +83,26 @@ func WritePDF(r *analysis.Result, path string) error {
 	return d.save(path)
 }
 
-func (d *doc) color(c rgb)                 { d.SetTextColor(c.r, c.g, c.b) }
-func (d *doc) fill(c rgb)                  { d.SetFillColor(c.r, c.g, c.b) }
-func (d *doc) draw(c rgb)                  { d.SetDrawColor(c.r, c.g, c.b) }
-func (d *doc) font(s string, size float64) { d.SetFont("Go", s, size) }
-
-func (d *doc) text(h float64, s string) {
-	d.MultiCell(content, h, d.tr(s), "", "L", false)
-}
-
-func (d *doc) header() {
-	if d.PageNo() == 1 {
-		return
-	}
-	d.font("", 7.5)
-	d.color(cMuted)
-	d.SetY(8)
-	d.CellFormat(content/2, 4, d.tr(d.title), "", 0, "L", false, 0, "")
-	d.CellFormat(content/2, 4, d.tr(d.source), "", 1, "R", false, 0, "")
-	d.draw(cRule)
-	d.Line(margin, 13, pageW-margin, 13)
-	d.SetY(18)
-}
-
-func (d *doc) footer() {
-	d.SetY(-12)
-	d.font("", 7.5)
-	d.color(cMuted)
-	d.CellFormat(content*0.75, 4, d.tr(fmt.Sprintf("rightsizer %s · open source by %s · %s", Version, Author, Website)), "", 0, "L", false, 0, Website)
-	d.CellFormat(content*0.25, 4, fmt.Sprintf("Page %d / {nb}", d.PageNo()), "", 0, "R", false, 0, "")
-}
-
-func (d *doc) h1(s string) {
-	d.font("B", 15)
-	d.color(cInk)
-	d.CellFormat(content, 9, d.tr(s), "", 1, "L", false, 0, "")
-	d.fill(cAccent)
-	d.Rect(margin, d.GetY(), 18, 0.8, "F")
-	d.Ln(4)
-}
-
-func (d *doc) h2(s string) {
-	d.Ln(2)
-	d.font("B", 11)
-	d.color(cInk)
-	d.CellFormat(content, 7, d.tr(s), "", 1, "L", false, 0, "")
-}
-
-func (d *doc) para(s string) {
-	d.font("", 9)
-	d.color(cInk)
-	d.text(4.6, s)
-	d.Ln(1.5)
-}
-
 func (d *doc) cover() {
 	r := d.r
-	d.AddPage()
-	d.fill(cAccent)
-	d.Rect(0, 0, pageW, 3, "F")
-	d.SetY(22)
-	d.font("B", 24)
-	d.color(cInk)
-	d.CellFormat(content, 11, "vSphere Rightsizing Report", "", 1, "L", false, 0, "")
-	d.font("", 11)
-	d.color(cMuted)
-	kind := "Interim report — analysis still running"
+	status := "INTERIM REPORT · ANALYSIS STILL RUNNING"
 	if r.Final {
-		kind = "Final report"
+		status = "FINAL REPORT"
 	}
-	d.CellFormat(content, 6, d.tr(kind), "", 1, "L", false, 0, "")
-	d.Ln(4)
-
-	meta := [][2]string{
-		{"vCenter", r.VCenter},
+	d.hero("vSphere Rightsizing Report", r.VCenter, status)
+	d.meta([][2]string{
 		{"Analysis window", fmt.Sprintf("%s → %s (%s of %s planned)", r.Start.Format("2006-01-02 15:04"), r.End.Format("2006-01-02 15:04"), dur(r.End.Sub(r.Start)), dur(r.Planned))},
 		{"Sizing profile", fmt.Sprintf("%s (p%.0f, vCPU target %.0f%%, memory headroom %.0f%%)", r.Profile.Name, r.Profile.Percentile, r.Profile.CPUTarget*100, (r.Profile.MemHeadroom-1)*100)},
 		{"Generated", r.Generated.Format("2006-01-02 15:04 MST")},
-	}
-	for _, m := range meta {
-		d.font("B", 9)
-		d.color(cMuted)
-		d.CellFormat(35, 5.5, d.tr(m[0]), "", 0, "L", false, 0, "")
-		d.font("", 9)
-		d.color(cInk)
-		d.CellFormat(content-35, 5.5, d.tr(m[1]), "", 1, "L", false, 0, "")
-	}
-	d.Ln(6)
+	})
 
 	t := r.Totals
-	kpis := []struct {
-		label, value, sub string
-		good              bool
-	}{
-		{"vCPU", fmt.Sprintf("%d → %d", t.VCPU, t.RecVCPU), pct(t.VCPU, t.RecVCPU), t.RecVCPU <= t.VCPU},
-		{"Memory", fmt.Sprintf("%s → %s", analysis.GiB(t.MemMB), analysis.GiB(t.RecMemMB)), pct(t.MemMB, t.RecMemMB), t.RecMemMB <= t.MemMB},
-		{"Hosts", fmt.Sprintf("%d → %d", t.Hosts, t.HostsNeeded), "incl. N+1 HA per cluster", t.HostsNeeded <= t.Hosts},
-		{"Reclaimable storage", analysis.Human(t.Reclaim), fmt.Sprintf("of %s committed", analysis.Human(t.Storage)), true},
-	}
-	w := (content - 3*4) / 4
-	y := d.GetY()
-	for i, k := range kpis {
-		x := margin + float64(i)*(w+4)
-		d.fill(cBand)
-		d.Rect(x, y, w, 26, "F")
-		d.fill(cAccent)
-		d.Rect(x, y, 1, 26, "F")
-		d.SetXY(x+4, y+3)
-		d.font("", 8)
-		d.color(cMuted)
-		d.CellFormat(w-6, 4, d.tr(k.label), "", 2, "L", false, 0, "")
-		d.SetX(x + 4)
-		d.font("B", 12.5)
-		for size := 12.5; d.GetStringWidth(k.value) > w-6 && size > 7; size -= 0.5 {
-			d.SetFontSize(size - 0.5)
-		}
-		d.color(cInk)
-		d.CellFormat(w-6, 8, d.tr(k.value), "", 2, "L", false, 0, "")
-		d.SetX(x + 4)
-		d.font("", 8)
-		if k.good {
-			d.color(cAccent)
-		} else {
-			d.color(cWarn)
-		}
-		d.CellFormat(w-6, 4, d.tr(k.sub), "", 2, "L", false, 0, "")
-	}
-	d.SetY(y + 32)
+	d.kpis([]kpi{
+		{"vCPU", fmt.Sprintf("%d → %d", t.VCPU, t.RecVCPU), pct(t.VCPU, t.RecVCPU), change(t.VCPU, t.RecVCPU)},
+		{"Memory", fmt.Sprintf("%s → %s", analysis.GiB(t.MemMB), analysis.GiB(t.RecMemMB)), pct(t.MemMB, t.RecMemMB), change(t.MemMB, t.RecMemMB)},
+		{"Hosts", fmt.Sprintf("%d → %d", t.Hosts, t.HostsNeeded), "incl. N+1 HA per cluster", change(t.Hosts, t.HostsNeeded)},
+		{"Reclaimable storage", analysis.Human(t.Reclaim), fmt.Sprintf("of %s committed", analysis.Human(t.Storage)), cGood},
+	})
 
 	d.h2("Summary")
 	sev := map[analysis.Severity]int{}
@@ -254,15 +137,9 @@ func (d *doc) cover() {
 		{"Hosts", float64(t.Hosts), float64(t.HostsNeeded), fmt.Sprint(t.Hosts), fmt.Sprint(t.HostsNeeded)},
 	})
 	if r.Preview {
-		d.Ln(3)
-		d.font("I", 8.5)
-		d.color(cWarn)
-		d.text(4.2, fmt.Sprintf("Preview: part of this report is based on vCenter's historical averages since %s (5-minute to 2-hour samples). Averages smooth out short peaks, so utilisation reads low and recommendations are optimistic. Each VM switches to 20-second data once it has 24 hours of it.", r.HistoryFrom.Format("2006-01-02")))
+		d.callout(fmt.Sprintf("Preview: part of this report is based on vCenter's historical averages since %s (5-minute to 2-hour samples). Averages smooth out short peaks, so utilisation reads low and recommendations are optimistic. Each VM switches to 20-second data once it has 24 hours of it.", r.HistoryFrom.Format("2006-01-02")), cWarn, cWarnTint)
 	} else if !r.Final {
-		d.Ln(3)
-		d.font("I", 8.5)
-		d.color(cWarn)
-		d.text(4.2, "Interim report: percentiles stabilise as more data is collected. Do not act on low-confidence findings until the analysis completes.")
+		d.callout("Interim report: percentiles stabilise as more data is collected. Do not act on low-confidence findings until the analysis completes.", cWarn, cWarnTint)
 	}
 }
 
@@ -273,44 +150,40 @@ type bar struct {
 }
 
 func (d *doc) bars(bs []bar) {
-	labelW, rowH := 32.0, 11.0
-	maxW := content - labelW - 26
+	const labelW, rowH, barH = 32.0, 12.0, 3.8
+	maxW := content - labelW - 36
 	y := d.GetY() + 1
 	for _, b := range bs {
 		scale := math.Max(b.prov, b.rec)
 		if scale <= 0 {
 			scale = 1
 		}
-		d.SetXY(margin, y)
-		d.font("", 8.5)
+		d.SetXY(margin, y+3)
+		d.font("B", 8.5)
 		d.color(cInk)
-		d.CellFormat(labelW, rowH, d.tr(b.label), "", 0, "L", false, 0, "")
-		pw := maxW * b.prov / scale
-		rw := maxW * b.rec / scale
+		d.CellFormat(labelW, 5, d.tr(b.label), "", 0, "L", false, 0, "")
+		x := margin + labelW
+		pw, rw := math.Max(maxW*b.prov/scale, barH), math.Max(maxW*b.rec/scale, barH)
 		d.fill(cProv)
-		d.Rect(margin+labelW, y+1.5, math.Max(pw, 0.3), 3.6, "F")
-		d.fill(cAccent)
-		d.Rect(margin+labelW, y+5.8, math.Max(rw, 0.3), 3.6, "F")
+		d.RoundedRect(x, y+1.4, pw, barH, barH/2, "1234", "F")
+		d.gradientRound(x, y+6.4, rw, barH, barH/2, cIce, cAccent)
 		d.font("", 7.5)
 		d.color(cMuted)
-		d.SetXY(margin+labelW+pw+1.5, y+1.3)
-		d.CellFormat(25, 4, d.tr(b.pl), "", 0, "L", false, 0, "")
+		d.SetXY(x+pw+2, y+1.3)
+		d.CellFormat(30, 4, d.tr(b.pl), "", 0, "L", false, 0, "")
+		d.font("B", 7.5)
 		d.color(cAccent)
-		d.SetXY(margin+labelW+rw+1.5, y+5.6)
-		d.CellFormat(25, 4, d.tr(b.rl), "", 0, "L", false, 0, "")
+		d.SetXY(x+rw+2, y+6.3)
+		d.CellFormat(d.GetStringWidth(d.tr(b.rl))+1.5, 4, d.tr(b.rl), "", 0, "L", false, 0, "")
+		if b.prov > 0 && b.rec != b.prov {
+			d.font("", 7)
+			d.color(change(int(b.prov), int(b.rec)))
+			d.CellFormat(20, 4, pct(int(b.prov), int(b.rec)), "", 0, "L", false, 0, "")
+		}
 		y += rowH
 	}
-	d.SetXY(margin+labelW, y+1)
-	d.font("", 7.5)
-	d.fill(cProv)
-	d.Rect(margin+labelW, y+2, 3, 3, "F")
-	d.color(cMuted)
-	d.SetX(margin + labelW + 4)
-	d.CellFormat(25, 5, "provisioned", "", 0, "L", false, 0, "")
-	d.fill(cAccent)
-	d.Rect(d.GetX(), y+2, 3, 3, "F")
-	d.SetX(d.GetX() + 4)
-	d.CellFormat(25, 5, "recommended", "", 1, "L", false, 0, "")
+	x := d.legend(margin+labelW, y+0.5, cProv, "provisioned")
+	d.legend(x, y+0.5, cAccent, "recommended")
 	d.SetY(y + 8)
 }
 
@@ -340,16 +213,12 @@ func (d *doc) refresh() {
 		{"Cluster", 24, "L"}, {"Hosts", 10, "R"}, {"Cores", 11, "R"}, {"CPU p/peak", 17, "R"}, {"Mem p", 11, "R"},
 		{"vCPU", 17, "R"}, {"vRAM", 25, "R"}, {"Need GHz", 16, "R"}, {"Need RAM", 18, "R"}, {"Need cores", 18, "R"}, {"Need hosts", 18, "R"},
 	}, rows)
-	d.font("I", 7.5)
-	d.color(cMuted)
-	d.text(4, "Need hosts: total (hosts for CPU / hosts for memory + HA spare) using the current host type. CPU p = cluster CPU demand percentile as % of capacity.")
+	d.note("Need hosts: total (hosts for CPU / hosts for memory + HA spare) using the current host type. CPU p = cluster CPU demand percentile as % of capacity.")
+	d.Ln(1)
 	for _, c := range r.Clusters {
 		if ep := c.EarlierPeak; ep != nil {
-			d.Ln(1)
-			d.font("", 8.5)
-			d.color(cWarn)
-			d.text(4.4, fmt.Sprintf("%s: vCenter history shows a higher peak of %.0f%% of CPU capacity on %s, before this analysis started. The window itself peaked at %.0f%%. Check whether that load recurs (month-end, batch runs) before relying on these figures.",
-				c.Name, ep.Pct, ep.At.Local().Format("Monday 2006-01-02 15:04"), ep.WindowPct))
+			d.callout(fmt.Sprintf("%s: vCenter history shows a higher peak of %.0f%% of CPU capacity on %s, before this analysis started. The window itself peaked at %.0f%%. Check whether that load recurs (month-end, batch runs) before relying on these figures.",
+				c.Name, ep.Pct, ep.At.Local().Format("Monday 2006-01-02 15:04"), ep.WindowPct), cWarn, cWarnTint)
 		}
 	}
 
@@ -357,7 +226,7 @@ func (d *doc) refresh() {
 		if len(c.Points) < 2 || c.CapMHz == 0 {
 			continue
 		}
-		if d.GetY() > 230 {
+		if d.GetY() > 225 {
 			d.AddPage()
 		}
 		d.h2(fmt.Sprintf("%s — %s", c.Name, c.CPUModel))
@@ -366,51 +235,34 @@ func (d *doc) refresh() {
 }
 
 func (d *doc) timeline(c analysis.ClusterResult) {
-	x0, y0, w, h := margin+10, d.GetY()+2, content-12, 36.0
-	d.draw(cRule)
-	d.SetLineWidth(0.2)
-	d.font("", 6.5)
-	d.color(cMuted)
-	for _, g := range []float64{0, 25, 50, 75, 100} {
-		y := y0 + h - h*g/100
-		d.Line(x0, y, x0+w, y)
-		d.SetXY(margin, y-1.5)
-		d.CellFormat(9, 3, fmt.Sprintf("%.0f%%", g), "", 0, "R", false, 0, "")
-	}
+	x0, y0, w, h := margin+10, d.GetY()+2, content-11, 36.0
+	d.grid(x0, y0, w, h, []string{"0%", "25%", "50%", "75%", "100%"})
 	n := len(c.Points)
 	t0, t1 := c.Points[0].T, c.Points[n-1].T
 	span := t1.Sub(t0).Seconds()
 	if span <= 0 {
 		span = 1
 	}
-	plot := func(col rgb, val func(analysis.Point) float64) {
-		d.draw(col)
-		d.SetLineWidth(0.45)
-		for i := 1; i < n; i++ {
-			a, b := c.Points[i-1], c.Points[i]
-			xa := x0 + w*a.T.Sub(t0).Seconds()/span
-			xb := x0 + w*b.T.Sub(t0).Seconds()/span
-			ya := y0 + h - h*math.Min(val(a), 100)/100
-			yb := y0 + h - h*math.Min(val(b), 100)/100
-			d.Line(xa, ya, xb, yb)
+	path := func(val func(analysis.Point) float64) []fpdf.PointType {
+		pts := make([]fpdf.PointType, n)
+		for i, p := range c.Points {
+			pts[i] = fpdf.PointType{X: x0 + w*p.T.Sub(t0).Seconds()/span, Y: y0 + h - h*math.Min(val(p), 100)/100}
 		}
+		return pts
 	}
-	plot(cProv, func(p analysis.Point) float64 { return p.MemB / c.CapMemB * 100 })
-	plot(cAccent, func(p analysis.Point) float64 { return p.CPUMHz / c.CapMHz * 100 })
-	d.SetLineWidth(0.2)
+	cpu := path(func(p analysis.Point) float64 { return p.CPUMHz / c.CapMHz * 100 })
+	d.area(cpu, y0+h, cAccent)
+	d.line(path(func(p analysis.Point) float64 { return p.MemB / c.CapMemB * 100 }), cIce, 0.45)
+	d.line(cpu, cAccent, 0.5)
+	d.font("", 6.5)
+	d.color(cFaint)
 	d.SetXY(x0, y0+h+1)
 	d.CellFormat(w/2, 3, t0.Format("Jan 02 15:04"), "", 0, "L", false, 0, "")
 	d.CellFormat(w/2, 3, t1.Format("Jan 02 15:04"), "", 1, "R", false, 0, "")
-	d.SetX(x0)
-	d.fill(cAccent)
-	d.Rect(x0, d.GetY()+1.2, 3, 1.2, "F")
-	d.SetX(x0 + 4)
-	d.CellFormat(30, 4, "CPU demand % of capacity", "", 0, "L", false, 0, "")
-	d.fill(cProv)
-	d.Rect(d.GetX()+4, d.GetY()+1.2, 3, 1.2, "F")
-	d.SetX(d.GetX() + 8)
-	d.CellFormat(40, 4, "Memory consumed % of capacity", "", 1, "L", false, 0, "")
-	d.Ln(2)
+	y := d.GetY() + 0.5
+	x := d.legend(x0, y, cAccent, "CPU demand % of capacity")
+	d.legend(x, y, cIce, "Memory consumed % of capacity")
+	d.SetY(y + 7)
 }
 
 func (d *doc) peaks() {
@@ -423,7 +275,11 @@ func (d *doc) peaks() {
 	if len(cs) == 0 {
 		return
 	}
-	d.AddPage()
+	if d.GetY() > 150 {
+		d.AddPage()
+	} else {
+		d.Ln(6)
+	}
 	d.h1("Peak-aware sizing")
 	d.para("VMs rarely peak at the same moment. Sizing a cluster on the sum of every VM's own peak buys hardware for a moment that never happens. " +
 		"The diversity factor compares that sum with the peak of the VMs' combined demand, both measured the same way: 1.5× means the naive method asks for 50% more CPU than needed.")
@@ -434,27 +290,39 @@ func (d *doc) peaks() {
 			fmt.Sprint(pk.NaiveHosts), fmt.Sprint(pk.AwareHosts)})
 	}
 	d.table([]col{{"Cluster", 50, "L"}, {"Sum of VM peaks", 30, "R"}, {"Combined peak", 28, "R"}, {"Diversity", 20, "R"}, {"Hosts, naive", 24, "R"}, {"Hosts, peak-aware", 28, "R"}}, rows)
-	d.font("I", 7.5)
-	d.color(cMuted)
-	d.text(4, fmt.Sprintf("Host counts cover CPU only, at the %s profile's %.0f%% target, before memory sizing and the HA spare.", d.r.Profile.Name, d.r.Profile.HostCPU*100))
+	d.note(fmt.Sprintf("Host counts cover CPU only, at the %s profile's %.0f%% target, before memory sizing and the HA spare.", d.r.Profile.Name, d.r.Profile.HostCPU*100))
 	for _, c := range cs {
-		if d.GetY() > 200 {
+		if d.GetY() > 205 {
 			d.AddPage()
 		}
 		d.h2(c.Name + ": demand by hour of week")
 		d.heatmap(c.Peaks)
-		for _, g := range c.Peaks.CoPeak {
-			d.font("", 8.5)
-			d.color(cInk)
-			d.text(4.4, fmt.Sprintf("Peak together (r %.2f): %s. Their peaks add up; check whether they share a schedule, such as a batch window.", g.R, strings.Join(g.VMs, ", ")))
-		}
-		for i, p := range c.Peaks.Complementary {
-			if i == 5 {
-				break
+		if len(c.Peaks.CoPeak) > 0 {
+			d.label("Peak together", cWarn)
+			d.note("Their peaks add up; check whether they share a schedule, such as a batch window.")
+			d.Ln(1)
+			for _, g := range c.Peaks.CoPeak {
+				if d.GetY() > 270 {
+					d.AddPage()
+				}
+				y := d.GetY()
+				w := d.pill(margin, y+0.4, fmt.Sprintf("r %.2f", g.R), cWarnTint, cWarn, 6.2)
+				d.SetXY(margin+w+2.5, y)
+				d.font("", 8.3)
+				d.color(cInk)
+				d.MultiCell(content-w-2.5, 4.3, d.tr(strings.Join(g.VMs, ", ")), "", "L", false)
+				d.Ln(1)
 			}
-			d.font("", 8.5)
-			d.color(cMuted)
-			d.text(4.4, fmt.Sprintf("Peak at different times (r %.2f): %s and %s. Pairs like these are why the cluster needs less than the sum of its peaks.", p.R, p.A, p.B))
+		}
+		if n := min(len(c.Peaks.Complementary), 5); n > 0 {
+			d.label("Peak at different times", cGood)
+			d.note("Pairs like these are why the cluster needs less than the sum of its peaks.")
+			d.Ln(1)
+			rows := make([][]string, 0, n)
+			for _, p := range c.Peaks.Complementary[:n] {
+				rows = append(rows, []string{p.A, p.B, fmt.Sprintf("%.2f", p.R)})
+			}
+			d.table([]col{{"VM", 80, "L"}, {"Peaks while this one is quiet", 80, "L"}, {"Correlation", 20, "R"}}, rows)
 		}
 		d.Ln(2)
 	}
@@ -487,9 +355,9 @@ func (d *doc) accuracy() {
 
 func (d *doc) heatmap(pk *analysis.Peaks) {
 	x0, y0 := margin+12, d.GetY()+1
-	cw, ch := (content-14)/24, 4.2
+	cw, ch := (content-14)/24, 4.6
 	d.font("", 6.5)
-	d.color(cMuted)
+	d.color(cFaint)
 	for h := 0; h < 24; h += 3 {
 		d.SetXY(x0+float64(h)*cw, y0)
 		d.CellFormat(cw*3, 3, fmt.Sprintf("%02d:00", h), "", 0, "L", false, 0, "")
@@ -497,25 +365,38 @@ func (d *doc) heatmap(pk *analysis.Peaks) {
 	y0 += 4
 	for day, name := range []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"} {
 		d.SetXY(margin, y0+float64(day)*ch)
+		d.font("", 6.8)
 		d.color(cMuted)
 		d.CellFormat(11, ch, name, "", 0, "L", false, 0, "")
 		for h := range 24 {
-			c := cBand
+			c := cZebra
 			if pk.HeatmapN[day][h] > 0 {
-				v := min(pk.Heatmap[day][h]/100, 1)
-				c = rgb{int(float64(cBand.r) + (float64(cAccent.r)-float64(cBand.r))*v), int(float64(cBand.g) + (float64(cAccent.g)-float64(cBand.g))*v), int(float64(cBand.b) + (float64(cAccent.b)-float64(cBand.b))*v)}
+				c = along(heatStops, pk.Heatmap[day][h]/100)
 				if pk.Heatmap[day][h] >= 80 {
 					c = cBad
 				}
 			}
 			d.fill(c)
-			d.Rect(x0+float64(h)*cw+0.15, y0+float64(day)*ch+0.15, cw-0.3, ch-0.3, "F")
+			d.RoundedRect(x0+float64(h)*cw+0.25, y0+float64(day)*ch+0.25, cw-0.5, ch-0.5, 0.7, "1234", "F")
 		}
 	}
-	d.SetY(y0 + 7*ch + 1)
-	d.font("", 7)
+	y := y0 + 7*ch + 1.5
+	d.SetXY(x0, y)
+	d.font("", 6.8)
 	d.color(cMuted)
-	d.CellFormat(content, 4, "Average CPU demand as % of cluster capacity; darker is busier, red is 80% or more.", "", 1, "L", false, 0, "")
+	d.CellFormat(8, 3.4, "idle", "", 0, "L", false, 0, "")
+	x := d.GetX()
+	for i := range 12 {
+		d.fill(along(heatStops, float64(i)/11))
+		d.RoundedRect(x+float64(i)*3.4, y+0.3, 3.0, 2.8, 0.5, "1234", "F")
+	}
+	d.SetXY(x+12*3.4+1, y)
+	d.CellFormat(10, 3.4, "busy", "", 0, "L", false, 0, "")
+	d.fill(cBad)
+	d.RoundedRect(d.GetX()+2, y+0.3, 3.0, 2.8, 0.5, "1234", "F")
+	d.SetX(d.GetX() + 6)
+	d.CellFormat(70, 3.4, "80% or more", "", 1, "L", false, 0, "")
+	d.note("Average CPU demand as % of cluster capacity, by weekday and hour.")
 	d.Ln(1)
 }
 
@@ -531,10 +412,7 @@ func (d *doc) waste() {
 	}
 	d.h1("Hidden waste")
 	if r.WasteNote != "" {
-		d.font("I", 8.5)
-		d.color(cWarn)
-		d.text(4.4, r.WasteNote)
-		d.Ln(1)
+		d.callout(r.WasteNote, cWarn, cWarnTint)
 	}
 	if len(r.Orphans) == 0 {
 		return
@@ -571,30 +449,37 @@ func (d *doc) excluded() {
 	d.h1("Excluded from recommendations")
 	d.para("These VMs and disks were deliberately left out. Excluded VMs count at their provisioned size in every total, so the savings above are not overstated.")
 	for _, x := range xs {
-		if d.GetY() > 262 {
+		if d.GetY() > 255 {
 			d.AddPage()
 		}
-		d.font("B", 8.5)
+		y := d.GetY() + 1
+		name := d.tr(x.Target())
+		d.SetXY(margin+4, y)
+		d.font("B", 9)
 		d.color(cInk)
-		d.CellFormat(content, 5, d.tr(x.Target()+"  ·  "+x.Scope()), "", 1, "L", false, 0, "")
-		d.font("", 8)
-		d.SetX(margin + 3)
-		d.MultiCell(content-3, 4, d.tr(x.Reason+": "+x.Note), "", "L", false)
+		d.CellFormat(d.GetStringWidth(name)+2, 5, name, "", 0, "L", false, 0, "")
+		d.pill(d.GetX()+1, y+0.8, x.Scope(), cTint, cAccent, 6)
+		d.SetXY(margin+4, y+5.6)
+		d.font("", 8.3)
+		d.color(cInk)
+		d.MultiCell(content-4, 4.2, d.tr(x.Reason+": "+x.Note), "", "L", false)
 		meta := "Excluded since " + x.Created.Format("2006-01-02")
 		if len(x.Matched) > 1 || x.Pattern() {
 			meta += fmt.Sprintf(" · matches %d: %s", len(x.Matched), strings.Join(x.Matched, ", "))
 		}
-		d.SetX(margin + 3)
 		d.font("", 7.5)
-		d.color(cMuted)
+		d.color(cFaint)
 		if x.Overdue(d.r.Generated) {
 			d.color(cBad)
 			meta += " · review overdue since " + x.ReviewBy.Format("2006-01-02")
 		} else if !x.ReviewBy.IsZero() {
 			meta += " · review by " + x.ReviewBy.Format("2006-01-02")
 		}
-		d.MultiCell(content-3, 3.8, d.tr(meta), "", "L", false)
-		d.Ln(1.5)
+		d.SetX(margin + 4)
+		d.MultiCell(content-4, 3.9, d.tr(meta), "", "L", false)
+		d.fill(cPeri)
+		d.RoundedRect(margin, y, 1.2, d.GetY()-y, 0.6, "1234", "F")
+		d.Ln(3)
 	}
 }
 
@@ -640,16 +525,14 @@ func (d *doc) findingSummary() {
 	rows := [][]string{}
 	for _, k := range kinds {
 		a := by[analysis.Kind(k)]
-		rows = append(rows, []string{k, fmt.Sprint(a.n), signed(a.vcpu, ""), signedGiB(a.mem), dash(a.bytes)})
+		rows = append(rows, []string{a.sev.String(), k, fmt.Sprint(a.n), signed(a.vcpu, ""), signedGiB(a.mem), dash(a.bytes)})
 	}
 	if len(rows) == 0 {
 		d.para("No findings yet.")
 		return
 	}
-	d.table([]col{{"Category", 60, "L"}, {"VMs", 20, "R"}, {"vCPU", 30, "R"}, {"Memory", 35, "R"}, {"Storage", 35, "R"}}, rows)
-	d.font("I", 7.5)
-	d.color(cMuted)
-	d.text(4, "Positive values are resources that can be released; negative values are additional resources needed by undersized VMs. Idle VM savings assume decommissioning.")
+	d.tableWith([]col{{"Priority", 20, "L"}, {"Category", 56, "L"}, {"VMs", 18, "R"}, {"vCPU", 26, "R"}, {"Memory", 30, "R"}, {"Storage", 30, "R"}}, rows, tableOpts{pill: 0})
+	d.note("Priority is the highest of the category. Positive values are resources that can be released; negative values are additional resources needed by undersized VMs. Idle VM savings assume decommissioning.")
 }
 
 func (d *doc) findings() {
@@ -661,7 +544,7 @@ func (d *doc) findings() {
 	for _, f := range d.r.Findings {
 		rows = append(rows, []string{f.Severity.String(), f.VM, string(f.Kind), f.Current, f.Suggested, f.Confidence})
 	}
-	d.table([]col{{"Priority", 14, "L"}, {"VM", 40, "L"}, {"Finding", 32, "L"}, {"Current", 36, "L"}, {"Suggested", 42, "L"}, {"Conf.", 16, "L"}}, rows)
+	d.tableWith([]col{{"Priority", 15, "L"}, {"VM", 39, "L"}, {"Finding", 32, "L"}, {"Current", 36, "L"}, {"Suggested", 42, "L"}, {"Conf.", 16, "L"}}, rows, tableOpts{pill: 0})
 
 	d.h2("Details by VM")
 	byVM := map[string][]analysis.Finding{}
@@ -674,18 +557,22 @@ func (d *doc) findings() {
 	}
 	// Findings are already ordered by criticality; VMs keep the order of
 	// their most critical finding.
-	for _, n := range names {
+	for i, n := range names {
 		fs := byVM[n]
-		if d.GetY() > 262 {
+		if d.GetY() > 258 {
 			d.AddPage()
+		} else if i > 0 {
+			d.draw(cRule)
+			d.SetLineWidth(0.2)
+			d.Line(margin, d.GetY()+0.6, pageW-margin, d.GetY()+0.6)
+			d.Ln(1.6)
 		}
-		d.font("B", 8.5)
+		d.font("B", 8.8)
 		d.color(cInk)
-		d.CellFormat(content, 5, d.tr(n+"  "), "", 0, "L", false, 0, "")
-		d.SetX(margin + d.GetStringWidth(n+"  "))
+		d.CellFormat(d.GetStringWidth(d.tr(n))+2.5, 5.2, d.tr(n), "", 0, "L", false, 0, "")
 		d.font("", 7.5)
-		d.color(cMuted)
-		d.CellFormat(60, 5, d.tr(fs[0].Cluster), "", 1, "L", false, 0, "")
+		d.color(cFaint)
+		d.CellFormat(60, 5.2, d.tr(fs[0].Cluster), "", 1, "L", false, 0, "")
 		for _, f := range fs {
 			d.font("B", 7.8)
 			d.color(sevColor(f.Severity))
@@ -703,8 +590,8 @@ func (d *doc) findings() {
 				d.CellFormat(content-37, 3.9, l, "", 1, "L", false, 0, "")
 			}
 		}
-		d.Ln(1.2)
 	}
+	d.Ln(2)
 }
 
 func (d *doc) vmTable() {
@@ -753,84 +640,33 @@ func (d *doc) method() {
 		"Preview: until a VM has 24 hours of 20-second data, results use vCenter's stored history for the previous 14 days, read at the finest interval available for each period and weighted by the time each sample covers.",
 	}
 	for _, s := range rules {
-		d.font("", 8.8)
-		d.color(cInk)
-		d.CellFormat(4, 4.6, "•", "", 0, "L", false, 0, "")
-		d.MultiCell(content-4, 4.6, d.tr(s), "", "L", false)
-		d.Ln(0.8)
+		d.bullet(s)
 	}
 	d.h2("Before you act")
 	d.para("Active memory is what the hypervisor observed being touched; databases, JVMs and caching layers may reserve more than they touch. Validate memory reductions with in-guest metrics and application owners. Reducing vCPU usually requires a VM power cycle unless CPU hot-remove is supported. Month-end or seasonal peaks outside the analysis window are not represented; prefer a two-week window for production systems.")
+	d.colophon()
+}
+
+// colophon closes a document with the project credits.
+func (d *doc) colophon() {
 	d.Ln(4)
-	d.font("", 8.5)
-	d.color(cMuted)
-	d.text(4.4, fmt.Sprintf("rightsizer %s is open-source software by %s (%s), released under the Apache License 2.0. Source: %s", Version, Author, Website, Project))
-}
-
-type col struct {
-	h     string
-	w     float64
-	align string
-}
-
-func (d *doc) table(cols []col, rows [][]string) {
-	total := 0.0
-	for _, c := range cols {
-		total += c.w
+	if d.GetY() > 255 {
+		d.AddPage()
 	}
-	k := content / total
-	head := func() {
-		d.font("B", 7.5)
-		d.color(cMuted)
-		d.fill(cBand)
-		for _, c := range cols {
-			d.CellFormat(c.w*k, 6, d.tr(c.h), "", 0, c.align, true, 0, "")
-		}
-		d.Ln(-1)
-	}
-	head()
-	d.font("", 7.5)
-	for i, row := range rows {
-		if d.GetY()+5 > 279 {
-			d.AddPage()
-			head()
-			d.font("", 7.5)
-		}
-		d.color(cInk)
-		if i%2 == 1 {
-			d.fill(rgb{250, 251, 252})
-		} else {
-			d.fill(rgb{255, 255, 255})
-		}
-		for j, c := range cols {
-			s := ""
-			if j < len(row) {
-				s = row[j]
-			}
-			if j == 0 && len(cols) == 6 && cols[0].h == "Priority" {
-				d.color(sevColor(sevOf(s)))
-			} else {
-				d.color(cInk)
-			}
-			d.CellFormat(c.w*k, 5, d.fit(s, c.w*k-1.5), "", 0, c.align, true, 0, "")
-		}
-		d.Ln(-1)
-	}
-	d.draw(cRule)
-	d.Line(margin, d.GetY(), pageW-margin, d.GetY())
-	d.Ln(3)
-}
-
-func (d *doc) fit(s string, w float64) string {
-	s = d.tr(s)
-	if d.GetStringWidth(s) <= w {
-		return s
-	}
-	r := []rune(s)
-	for len(r) > 1 && d.GetStringWidth(string(r)+"…") > w {
-		r = r[:len(r)-1]
-	}
-	return string(r) + "…"
+	y := d.GetY()
+	d.gradientRound(margin, y, content, 19, 2.4, cDeep, cAccent)
+	d.diamond(margin+7, y+9.5, 2, cLake)
+	d.SetXY(margin+12, y+3)
+	d.font("B", 9.5)
+	d.color(cWhite)
+	d.CellFormat(content-16, 4.8, "rightsizer "+Version, "", 2, "L", false, 0, "")
+	d.SetX(margin + 12)
+	d.font("", 7.8)
+	d.color(cLake)
+	d.CellFormat(content-16, 4.2, d.tr(fmt.Sprintf("Open-source software by %s, released under the Apache License 2.0", Author)), "", 2, "L", false, 0, Website)
+	d.SetX(margin + 12)
+	d.CellFormat(content-16, 4.2, Project, "", 1, "L", false, 0, Project)
+	d.SetY(y + 21)
 }
 
 func dataLabel(v analysis.VMResult) string {
@@ -840,16 +676,6 @@ func dataLabel(v analysis.VMResult) string {
 	return fmt.Sprintf("%.0fh", v.Hours)
 }
 
-func sevOf(s string) analysis.Severity {
-	switch s {
-	case "high":
-		return analysis.High
-	case "medium":
-		return analysis.Medium
-	}
-	return analysis.Low
-}
-
 func sevColor(s analysis.Severity) rgb {
 	switch s {
 	case analysis.High:
@@ -857,7 +683,7 @@ func sevColor(s analysis.Severity) rgb {
 	case analysis.Medium:
 		return cWarn
 	default:
-		return cMuted
+		return cSlate
 	}
 }
 

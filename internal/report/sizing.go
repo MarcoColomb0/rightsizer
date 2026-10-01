@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"codeberg.org/go-pdf/fpdf"
+
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 )
 
@@ -34,43 +36,11 @@ func (s *sizingDoc) basis() int {
 	return 0
 }
 
-func (s *sizingDoc) kpi(x, y, w float64, label, value, sub string) {
-	s.fill(cBand)
-	s.Rect(x, y, w, 26, "F")
-	s.fill(cAccent)
-	s.Rect(x, y, 1, 26, "F")
-	s.SetXY(x+4, y+3)
-	s.font("", 8)
-	s.color(cMuted)
-	s.CellFormat(w-6, 4, s.tr(label), "", 2, "L", false, 0, "")
-	s.SetX(x + 4)
-	s.font("B", 12.5)
-	for size := 12.5; s.GetStringWidth(value) > w-6 && size > 7; size -= 0.5 {
-		s.SetFontSize(size - 0.5)
-	}
-	s.color(cInk)
-	s.CellFormat(w-6, 8, s.tr(value), "", 2, "L", false, 0, "")
-	s.SetX(x + 4)
-	s.font("", 8)
-	s.color(cAccent)
-	s.CellFormat(w-6, 4, s.tr(sub), "", 2, "L", false, 0, "")
-}
-
 func tb(b int64) string { return analysis.Human(b) }
 
 func (s *sizingDoc) cover() {
 	sz, p := s.sz, s.sz.Params
-	s.AddPage()
-	s.fill(cAccent)
-	s.Rect(0, 0, pageW, 3, "F")
-	s.SetY(22)
-	s.font("B", 24)
-	s.color(cInk)
-	s.CellFormat(content, 11, "Hardware Refresh Sizing", "", 1, "L", false, 0, "")
-	s.font("", 11)
-	s.color(cMuted)
-	s.CellFormat(content, 6, s.tr("Compute sized "+analysis.BasisLabel(p.Basis)+", storage from raw used capacity"), "", 1, "L", false, 0, "")
-	s.Ln(4)
+	s.hero("Hardware Refresh Sizing", sz.VCenter, strings.ToUpper("Compute sized "+analysis.BasisLabel(p.Basis)+" · storage from raw used capacity"))
 	window := "no performance data yet"
 	if !sz.Start.IsZero() {
 		window = fmt.Sprintf("%s → %s", sz.Start.Format("2006-01-02 15:04"), sz.End.Format("2006-01-02 15:04"))
@@ -83,33 +53,22 @@ func (s *sizingDoc) cover() {
 	if !sz.EstateTaken.IsZero() {
 		estate = sz.EstateTaken.Format("2006-01-02 15:04")
 	}
-	meta := [][2]string{
-		{"vCenter", sz.VCenter},
+	s.meta([][2]string{
 		{"Performance data", window},
 		{"Hardware read", estate},
 		{"Parameters", fmt.Sprintf("growth %g%% · vCPU per core %s · CPU ≤ %g%% and memory ≤ %g%% with %d HA spare(s) out · %d socket(s) per node · per-core uplift %g%% · keep %g%% storage free · p%.0f",
 			p.Growth, ratio, p.CPUTarget, p.MemTarget, p.Spares, p.Sockets, p.Uplift, p.FreeSpace, sz.Percentile)},
 		{"Generated", sz.Generated.Format("2006-01-02 15:04 MST")},
-	}
-	for _, m := range meta {
-		s.font("B", 9)
-		s.color(cMuted)
-		s.CellFormat(35, 5.5, s.tr(m[0]), "", 0, "L", false, 0, "")
-		s.font("", 9)
-		s.color(cInk)
-		s.MultiCell(content-35, 5.5, s.tr(m[1]), "", "L", false)
-	}
-	s.Ln(5)
+	})
 
 	t := sz.Totals
 	nt := t.For(p.Basis)
-	w := (content - 3*4) / 4
-	y := s.GetY()
-	s.kpi(margin, y, w, "New nodes", fmt.Sprint(nt.Nodes), fmt.Sprintf("today %d hosts", t.Hosts))
-	s.kpi(margin+(w+4), y, w, "Physical cores", fmt.Sprintf("%d → %d", t.Cores, nt.Cores), pct(t.Cores, nt.Cores))
-	s.kpi(margin+2*(w+4), y, w, "RAM", fmt.Sprintf("%s → %s", tb(t.MemB), analysis.GBLabel(nt.MemGB)), pct(int(t.MemB>>30), nt.MemGB))
-	s.kpi(margin+3*(w+4), y, w, "Raw used storage", tb(sz.Storage.RawUsed), "plan "+tb(sz.Storage.Plan)+" usable")
-	s.SetY(y + 32)
+	s.kpis([]kpi{
+		{"New nodes", fmt.Sprint(nt.Nodes), fmt.Sprintf("today %d hosts", t.Hosts), cMuted},
+		{"Physical cores", fmt.Sprintf("%d → %d", t.Cores, nt.Cores), pct(t.Cores, nt.Cores), change(t.Cores, nt.Cores)},
+		{"RAM", fmt.Sprintf("%s → %s", tb(t.MemB), analysis.GBLabel(nt.MemGB)), pct(int(t.MemB>>30), nt.MemGB), change(int(t.MemB>>30), nt.MemGB)},
+		{"Raw used storage", tb(sz.Storage.RawUsed), "plan " + tb(sz.Storage.Plan) + " usable", cMuted},
+	})
 
 	s.h2("Recommended nodes")
 	rows := [][]string{}
@@ -128,9 +87,7 @@ func (s *sizingDoc) cover() {
 		s.para("No cluster with running VMs yet.")
 	} else {
 		s.table([]col{{"Cluster", 30, "L"}, {"Nodes", 12, "R"}, {"Per node", 42, "L"}, {"Cores", 14, "R"}, {"RAM", 16, "R"}, {"Ports per node", 66, "L"}}, rows)
-		s.font("I", 7.5)
-		s.color(cMuted)
-		s.text(4, fmt.Sprintf("Node counts include %d HA spare(s) per cluster. Other node shapes are compared on the next page.", p.Spares))
+		s.note(fmt.Sprintf("Node counts include %d HA spare(s) per cluster. Other node shapes are compared on the next page.", p.Spares))
 	}
 
 	s.h2("Summary")
@@ -151,14 +108,11 @@ func (s *sizingDoc) cover() {
 	s.para(fmt.Sprintf("The VMs store %s of data (raw used, before any data reduction on the new storage); with growth and %g%% free space, plan %s of usable capacity before data reduction. %s",
 		tb(st.RawUsed), p.FreeSpace, tb(st.Plan), perf))
 	if sz.Preview || !sz.Final {
-		s.Ln(1)
-		s.font("I", 8.5)
-		s.color(cWarn)
 		msg := "Interim sizing: the analysis is still collecting data. Percentiles settle as the window completes."
 		if sz.Preview {
 			msg = "Preview: some figures come from vCenter's historical averages, which smooth out short peaks. Each figure switches to 20-second data once it has 24 hours of it."
 		}
-		s.text(4.2, msg)
+		s.callout(msg, cWarn, cWarnTint)
 	}
 }
 
@@ -208,23 +162,21 @@ func (s *sizingDoc) compute() {
 	}
 	s.table([]col{{"Cluster", 28, "L"}, {"Hosts", 11, "R"}, {"Cores (thr.)", 19, "R"}, {"RAM", 16, "R"}, {"VMs on/off", 16, "R"},
 		{"vCPU", 12, "R"}, {"vRAM", 17, "R"}, {"vCPU:core", 15, "R"}, {"CPU p/peak", 24, "R"}, {"Mem used", 16, "R"}}, rows)
-	s.font("I", 7.5)
-	s.color(cMuted)
-	s.text(4, fmt.Sprintf("vCPU and vRAM: powered-on VMs as configured. CPU: demand of all hosts at p%.0f and peak. Mem used: memory the hosts back for VMs (consumed) at p%.0f.", sz.Percentile, sz.Percentile))
+	s.note(fmt.Sprintf("vCPU and vRAM: powered-on VMs as configured. CPU: demand of all hosts at p%.0f and peak. Mem used: memory the hosts back for VMs (consumed) at p%.0f.", sz.Percentile, sz.Percentile))
 
 	s.h2("Needed")
 	rows = rows[:0]
+	var chosen []bool
 	for _, c := range sz.Clusters {
 		for _, n := range c.Needs {
+			chosen = append(chosen, n.Basis == sz.Params.Basis)
 			rows = append(rows, []string{c.Name, analysis.BasisLabel(n.Basis), fmt.Sprint(n.VCPU), analysis.GiB(n.MemMB), fmt.Sprintf("%g:1", n.Ratio),
 				fmt.Sprint(n.CoresByRatio), fmt.Sprint(n.CoresByDemand), fmt.Sprint(n.Cores), tb(int64(n.MemB))})
 		}
 	}
-	s.table([]col{{"Cluster", 28, "L"}, {"Basis", 22, "L"}, {"vCPU", 14, "R"}, {"vRAM", 18, "R"}, {"Ratio", 14, "R"},
-		{"Cores by ratio", 20, "R"}, {"Cores by demand", 22, "R"}, {"Cores", 14, "R"}, {"RAM needed", 20, "R"}}, rows)
-	s.font("I", 7.5)
-	s.color(cMuted)
-	s.text(4, fmt.Sprintf("Figures include %g%% growth. RAM needed covers the nodes left running with the HA spares out.", sz.Params.Growth))
+	s.tableWith([]col{{"Cluster", 28, "L"}, {"Basis", 22, "L"}, {"vCPU", 14, "R"}, {"vRAM", 18, "R"}, {"Ratio", 14, "R"},
+		{"Cores by ratio", 20, "R"}, {"Cores by demand", 22, "R"}, {"Cores", 14, "R"}, {"RAM needed", 20, "R"}}, rows, tableOpts{pill: -1, hl: func(i int) bool { return chosen[i] }})
+	s.note(fmt.Sprintf("Figures include %g%% growth. RAM needed covers the nodes left running with the HA spares out.", sz.Params.Growth))
 
 	for _, c := range sz.Clusters {
 		n := c.Needs[s.basis()]
@@ -249,8 +201,9 @@ func (s *sizingDoc) compute() {
 				fmt.Sprint(o.TotalCores), analysis.GBLabel(o.Nodes * o.MemGB), fmt.Sprintf("%.0f%%", o.CPUUtil), fmt.Sprintf("%.0f%%", o.MemUtil),
 				fmt.Sprintf("%.1f:1", o.Ratio), minGHz(o.MinGHz), fit})
 		}
-		s.table([]col{{"", 20, "L"}, {"Nodes", 11, "R"}, {"CPUs × cores", 18, "R"}, {"RAM/node", 16, "R"}, {"Cores", 13, "R"}, {"RAM total", 17, "R"},
-			{"CPU load", 14, "R"}, {"RAM load", 14, "R"}, {"vCPU:core", 16, "R"}, {"Min clock", 16, "R"}, {"NUMA fit", 14, "R"}}, rows)
+		pick := n.Pick
+		s.tableWith([]col{{"", 20, "L"}, {"Nodes", 11, "R"}, {"CPUs × cores", 18, "R"}, {"RAM/node", 16, "R"}, {"Cores", 13, "R"}, {"RAM total", 17, "R"},
+			{"CPU load", 14, "R"}, {"RAM load", 14, "R"}, {"vCPU:core", 16, "R"}, {"Min clock", 16, "R"}, {"NUMA fit", 14, "R"}}, rows, tableOpts{pill: -1, hl: func(i int) bool { return i == pick }})
 		extra := ""
 		if c.LargestCPU.VCPU > 0 {
 			extra = fmt.Sprintf(" Largest VMs: %s (%d vCPU), %s (%s).", c.LargestCPU.Name, c.LargestCPU.VCPU, c.LargestMem.Name, analysis.GiB(c.LargestMem.MemMB))
@@ -258,9 +211,7 @@ func (s *sizingDoc) compute() {
 		if c.ReserveMB > 0 || c.ReserveMHz > 0 {
 			extra += fmt.Sprintf(" Reservations: %.1f GHz, %s.", float64(c.ReserveMHz)/1000, analysis.GiB(int(c.ReserveMB)))
 		}
-		s.font("I", 7.5)
-		s.color(cMuted)
-		s.text(4, "Loads are the planned demand, growth included, with the HA spares out. Min clock: lowest core clock that keeps CPU at target, at today's performance per clock. NUMA fit: the largest VM fits in one socket."+extra)
+		s.note("Loads are the planned demand, growth included, with the HA spares out. Min clock: lowest core clock that keeps CPU at target, at today's performance per clock. NUMA fit: the largest VM fits in one socket." + extra)
 	}
 }
 
@@ -300,9 +251,7 @@ func (s *sizingDoc) connectivity() {
 			gbps(c.NetPeakKBps), gbps(c.KBpsPeak)})
 	}
 	s.table([]col{{"Cluster", 24, "L"}, {"NIC ports", 50, "L"}, {"Storage adapters", 32, "L"}, {"Protocols", 20, "L"}, {"MTU", 12, "R"}, {"Net peak", 16, "R"}, {"Storage peak", 18, "R"}}, rows)
-	s.font("I", 7.5)
-	s.color(cMuted)
-	s.text(4, "Ports are counted on every host of the cluster. Peaks are the busiest 20-second sample of all hosts together. World wide port names and every adapter are listed in the data download.")
+	s.note("Ports are counted on every host of the cluster. Peaks are the busiest 20-second sample of all hosts together. World wide port names and every adapter are listed in the data download.")
 
 	s.h2("Ports for the new nodes")
 	rows = rows[:0]
@@ -380,7 +329,7 @@ func (s *sizingDoc) storage() {
 		{"Guest file systems used", tb(st.GuestUsed), fmt.Sprintf("As reported by VMware Tools, %.0f%% of VM disk data covered", st.GuestCoverage*100)},
 		{"Datastores used", tb(st.Used), fmt.Sprintf("of %s on %d datastores", tb(st.Capacity), st.Datastores)},
 	}
-	s.table([]col{{"Capacity", 50, "L"}, {"Size", 25, "R"}, {"", 105, "L"}}, rows)
+	s.tableWith([]col{{"Capacity", 50, "L"}, {"Size", 25, "R"}, {"", 105, "L"}}, rows, tableOpts{pill: -1, hl: func(i int) bool { return i == 5 || i == 6 }})
 
 	if len(st.ByType) > 0 {
 		s.h2("By datastore type")
@@ -413,9 +362,7 @@ func (s *sizingDoc) storage() {
 			rows = append(rows, []string{w.Name, fmt.Sprintf("%d / %d", w.On, w.VMs), fmt.Sprint(w.VCPU), analysis.GiB(w.MemMB), tb(w.Used), tb(w.Provisioned), tb(w.GuestUsed), Num(w.IOPS), share})
 		}
 		s.table([]col{{"Workload", 32, "L"}, {"VMs on/all", 18, "R"}, {"vCPU", 13, "R"}, {"vRAM", 18, "R"}, {"Raw used", 20, "R"}, {"Provisioned", 20, "R"}, {"Guest used", 20, "R"}, {"Avg IOPS", 18, "R"}, {"IOPS share", 18, "R"}}, rows)
-		s.font("I", 7.5)
-		s.color(cMuted)
-		s.text(4, "Workloads follow the groups set in the sizing options, otherwise the guest operating system. Raw used includes raw device mappings; swap files are left out.")
+		s.note("Workloads follow the groups set in the sizing options, otherwise the guest operating system. Raw used includes raw device mappings; swap files are left out.")
 	}
 
 	s.storagePerf()
@@ -458,7 +405,7 @@ func (s *sizingDoc) storagePerf() {
 }
 
 func (s *sizingDoc) ioChart(pts []analysis.IOPoint) {
-	x0, y0, w, h := margin+14, s.GetY()+2, content-16, 36.0
+	x0, y0, w, h := margin+14, s.GetY()+2, content-15, 36.0
 	var top float64
 	for _, p := range pts {
 		top = max(top, p.IOPS)
@@ -468,34 +415,29 @@ func (s *sizingDoc) ioChart(pts []analysis.IOPoint) {
 	}
 	step := math.Pow(10, math.Floor(math.Log10(top)))
 	top = math.Ceil(top/step) * step
-	s.draw(cRule)
-	s.SetLineWidth(0.2)
-	s.font("", 6.5)
-	s.color(cMuted)
-	for _, g := range []float64{0, 0.25, 0.5, 0.75, 1} {
-		y := y0 + h - h*g
-		s.Line(x0, y, x0+w, y)
-		s.SetXY(margin, y-1.5)
-		s.CellFormat(13, 3, Num(top*g), "", 0, "R", false, 0, "")
+	labels := make([]string, 5)
+	for i := range labels {
+		labels[i] = Num(top * float64(i) / 4)
 	}
+	s.grid(x0, y0, w, h, labels)
 	t0, t1 := pts[0].T, pts[len(pts)-1].T
 	span := t1.Sub(t0).Seconds()
 	if span <= 0 {
 		span = 1
 	}
-	s.draw(cAccent)
-	s.SetLineWidth(0.45)
-	for i := 1; i < len(pts); i++ {
-		a, b := pts[i-1], pts[i]
-		s.Line(x0+w*a.T.Sub(t0).Seconds()/span, y0+h-h*a.IOPS/top, x0+w*b.T.Sub(t0).Seconds()/span, y0+h-h*b.IOPS/top)
+	line := make([]fpdf.PointType, len(pts))
+	for i, p := range pts {
+		line[i] = fpdf.PointType{X: x0 + w*p.T.Sub(t0).Seconds()/span, Y: y0 + h - h*p.IOPS/top}
 	}
-	s.SetLineWidth(0.2)
+	s.area(line, y0+h, cAccent)
+	s.line(line, cAccent, 0.5)
+	s.font("", 6.5)
+	s.color(cFaint)
 	s.SetXY(x0, y0+h+1)
 	s.CellFormat(w/2, 3, t0.Format("Jan 02 15:04"), "", 0, "L", false, 0, "")
 	s.CellFormat(w/2, 3, t1.Format("Jan 02 15:04"), "", 1, "R", false, 0, "")
-	s.SetX(x0)
-	s.CellFormat(w, 4, s.tr("IOPS of all datastores, highest 5-minute average per point"), "", 1, "L", false, 0, "")
-	s.Ln(2)
+	s.legend(x0, s.GetY()+0.5, cAccent, "IOPS of all datastores, highest 5-minute average per point")
+	s.SetY(s.GetY() + 7)
 }
 
 func (s *sizingDoc) datastoreTable() {
@@ -537,9 +479,7 @@ func (s *sizingDoc) datastoreTable() {
 	}
 	pc := fmt.Sprintf("p%.0f", s.sz.Percentile)
 	s.table([]col{{"Datastore", 32, "L"}, {"Type", 18, "L"}, {"Backing", 44, "L"}, {"Capacity", 17, "R"}, {"Used", 16, "R"}, {"Prov.", 16, "R"}, {"IOPS " + pc, 15, "R"}, {"MB/s", 11, "R"}, {"ms", 10, "R"}}, rows)
-	s.font("I", 7.5)
-	s.color(cMuted)
-	s.text(4, "Backing is the storage device as reported to vSphere, or the NFS export. Used is capacity minus free space as the datastore reports it: on NFS it may already reflect the current array's data reduction.")
+	s.note("Backing is the storage device as reported to vSphere, or the NFS export. Used is capacity minus free space as the datastore reports it: on NFS it may already reflect the current array's data reduction.")
 }
 
 func (s *sizingDoc) current() {
@@ -566,9 +506,7 @@ func (s *sizingDoc) current() {
 			fmt.Sprintf("%d × %d", h.Sockets, h.Cores/max(h.Sockets, 1)), tb(h.MemBytes), esxi(h.ESXi), dashS(bios)})
 	}
 	s.table([]col{{"Cluster", 16, "L"}, {"Host", 28, "L"}, {"Model", 30, "L"}, {"Serial", 18, "L"}, {"CPU", 44, "L"}, {"Sockets", 12, "R"}, {"RAM", 12, "R"}, {"ESXi", 10, "L"}, {"BIOS", 12, "L"}}, rows)
-	s.font("I", 7.5)
-	s.color(cMuted)
-	s.text(4, "BIOS: release date of the installed firmware. Full versions, ESXi builds and every adapter are in the data download.")
+	s.note("BIOS: release date of the installed firmware. Full versions, ESXi builds and every adapter are in the data download.")
 
 	s.h2("Adapters")
 	rows = rows[:0]
@@ -664,13 +602,7 @@ func (s *sizingDoc) checklist() {
 	p := sz.Params
 	s.AddPage()
 	s.h1("Before you order")
-	bullet := func(t string) {
-		s.font("", 8.8)
-		s.color(cInk)
-		s.CellFormat(4, 4.6, "•", "", 0, "L", false, 0, "")
-		s.MultiCell(content-4, 4.6, s.tr(t), "", "L", false)
-		s.Ln(0.8)
-	}
+	bullet := s.bullet
 	for _, n := range sz.Notes {
 		bullet(n)
 	}
@@ -686,10 +618,7 @@ func (s *sizingDoc) checklist() {
 	} {
 		bullet(t)
 	}
-	s.Ln(4)
-	s.font("", 8.5)
-	s.color(cMuted)
-	s.text(4.4, fmt.Sprintf("rightsizer %s is open-source software by %s (%s), released under the Apache License 2.0. Source: %s", Version, Author, Website, Project))
+	s.colophon()
 }
 
 func ifs(c bool, a, b string) string {
