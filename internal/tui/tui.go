@@ -188,7 +188,7 @@ func New(b ipc.Backend, opt Options) Model {
 	m.szIn[szInput[soGroups]].SetWidth(48)
 	m.szIn[szInput[soGroups]].Placeholder = "none: group by guest OS"
 	m.spin = spinner.New(spinner.WithSpinner(spinner.MiniDot))
-	m.watch = stopwatch.New(stopwatch.WithInterval(100 * time.Millisecond))
+	m.watch = newWatch()
 	m.vp = viewport.New()
 	m.vp.SoftWrap = false
 	m.help = help.New()
@@ -289,8 +289,15 @@ func (m Model) fetch() tea.Cmd {
 
 func (m Model) busyCmd(label, what, id string, fn func() error) (tea.Model, tea.Cmd) {
 	m.back, m.scr, m.busy, m.err = m.scr, scrBusy, label, ""
-	m.watch = stopwatch.New(stopwatch.WithInterval(100 * time.Millisecond))
-	return m, tea.Batch(m.spin.Tick, m.watch.Start(), func() tea.Msg { return doneMsg{what, id, fn()} })
+	return m, tea.Batch(m.spin.Tick, m.startWatch(), func() tea.Msg { return doneMsg{what, id, fn()} })
+}
+
+func newWatch() stopwatch.Model { return stopwatch.New(stopwatch.WithInterval(100 * time.Millisecond)) }
+
+// startWatch restarts the elapsed time shown while an operation runs.
+func (m *Model) startWatch() tea.Cmd {
+	m.watch = newWatch()
+	return m.watch.Start()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -378,8 +385,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.exList.SetItems(exclusionItems(m.excl))
 		}
 		return m, nil
-	case tea.MouseMsg:
-		return m.mouse(msg)
+	case tea.MouseWheelMsg:
+		return m.wheel(msg.Button == tea.MouseWheelUp)
+	case clickMsg:
+		return m.click(string(msg))
 	case tea.KeyPressMsg:
 		return m.key(msg)
 	}
@@ -701,9 +710,8 @@ func (m Model) keySetup(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err, m.scr, m.busy = "", scrBusy, "Checking the vCenter certificate"
-		m.watch = stopwatch.New(stopwatch.WithInterval(100 * time.Millisecond))
 		b := m.b
-		return m, tea.Batch(m.spin.Tick, m.watch.Start(), func() tea.Msg {
+		return m, tea.Batch(m.spin.Tick, m.startWatch(), func() tea.Msg {
 			c, err := b.Probe(host)
 			return probeMsg{c, err}
 		})
@@ -762,8 +770,7 @@ func (m Model) add(fp string) (tea.Model, tea.Cmd) {
 	}
 	pw, b := m.in[fPass].Value(), m.b
 	m.scr, m.busy = scrBusy, "Connecting to vCenter and reading the inventory"
-	m.watch = stopwatch.New(stopwatch.WithInterval(100 * time.Millisecond))
-	return m, tea.Batch(m.spin.Tick, m.watch.Start(), func() tea.Msg {
+	return m, tea.Batch(m.spin.Tick, m.startWatch(), func() tea.Msg {
 		id, err := b.Add(cfg, pw)
 		return doneMsg{"add", id, err}
 	})
@@ -773,7 +780,6 @@ func (m Model) switchTab(t int) (tea.Model, tea.Cmd) {
 	m.tab = t
 	m.vp.GotoTop()
 	m.layout()
-	m.syncViewport()
 	if t == tabSizing {
 		return m, m.fetchSizing()
 	}

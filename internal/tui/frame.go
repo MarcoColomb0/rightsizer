@@ -64,9 +64,13 @@ func (m Model) bodyH() int { return max(m.h-headerH-m.footerH(), 5) }
 
 func (m Model) footerH() int { return lipgloss.Height(m.footer()) }
 
+// clickMsg reports a left click on the zone with this id.
+type clickMsg string
+
 func (m Model) View() tea.View {
-	content, _ := m.compose()
+	content, zones := m.compose()
 	v := tea.NewView(content)
+	v.OnMouse = func(msg tea.MouseMsg) tea.Cmd { return hit(zones, msg) }
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = m.windowTitle()
@@ -278,22 +282,20 @@ func (m Model) sources() int {
 	return len(m.sum.Sources)
 }
 
-func (m Model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.MouseWheelMsg:
-		return m.wheel(msg.Button == tea.MouseWheelUp)
-	case tea.MouseClickMsg:
-		if msg.Button != tea.MouseLeft {
-			return m, nil
-		}
-		_, zones := m.compose()
-		for _, z := range zones {
-			if msg.X >= z.x0 && msg.X <= z.x1 && msg.Y >= z.y0 && msg.Y <= z.y1 {
-				return m.click(z.id)
-			}
+// hit turns a left click into a clickMsg for the zone under it, using the
+// zones of the frame on screen.
+func hit(zones []zone, msg tea.MouseMsg) tea.Cmd {
+	c, ok := msg.(tea.MouseClickMsg)
+	if !ok || c.Button != tea.MouseLeft {
+		return nil
+	}
+	for _, z := range zones {
+		if c.X >= z.x0 && c.X <= z.x1 && c.Y >= z.y0 && c.Y <= z.y1 {
+			id := clickMsg(z.id)
+			return func() tea.Msg { return id }
 		}
 	}
-	return m, nil
+	return nil
 }
 
 func (m Model) click(id string) (tea.Model, tea.Cmd) {

@@ -568,8 +568,15 @@ func zoneText(t *testing.T, m Model, id string) (zone, string) {
 	return zone{}, ""
 }
 
-func click(z zone) tea.MouseClickMsg {
-	return tea.MouseClickMsg{X: z.x0 + 1, Y: z.y0, Button: tea.MouseLeft}
+// click sends a left click inside z through the handler of the frame on
+// screen, as the Bubble Tea runtime does.
+func click(t *testing.T, m Model, z zone) Model {
+	t.Helper()
+	cmd := m.View().OnMouse(tea.MouseClickMsg{X: z.x0 + 1, Y: z.y0, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatalf("no click handler at %+v", z)
+	}
+	return send(t, m, cmd())
 }
 
 func TestMouse(t *testing.T) {
@@ -577,15 +584,19 @@ func TestMouse(t *testing.T) {
 	m := New(f, Options{Version: "v1.0.0"})
 	m = send(t, m, tea.WindowSizeMsg{Width: 130, Height: 40}, m.fetch()())
 
+	on := m.View().OnMouse
+	if on(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}) != nil || on(tea.MouseClickMsg{X: 5, Y: 8, Button: tea.MouseRight}) != nil {
+		t.Fatal("only left clicks on a zone may act")
+	}
 	z, text := zoneText(t, m, "src:1")
 	if !strings.Contains(text, "vcsa02.corp.local") {
 		t.Fatalf("card zone covers %q", text)
 	}
-	m = send(t, m, click(z))
+	m = click(t, m, z)
 	if m.sel != 1 || m.scr != scrHome {
 		t.Fatal("a click must select the card")
 	}
-	m = send(t, m, click(z))
+	m = click(t, m, z)
 	if m.scr != scrSource || m.cur != "bbbb0002" {
 		t.Fatal("a click on the selected card must open it")
 	}
@@ -599,7 +610,7 @@ func TestMouse(t *testing.T) {
 	if !strings.Contains(text, "2 Findings") {
 		t.Fatalf("tab zone covers %q", text)
 	}
-	m = send(t, m, click(z))
+	m = click(t, m, z)
 	if m.tab != tabFindings {
 		t.Fatal("a click on a tab must open it")
 	}
@@ -607,7 +618,7 @@ func TestMouse(t *testing.T) {
 	if !strings.Contains(text, "web-01") {
 		t.Fatalf("row zone covers %q", text)
 	}
-	m = send(t, m, click(z))
+	m = click(t, m, z)
 	if m.tbl.Cursor() != 1 {
 		t.Fatal("a click on a finding must select it")
 	}
@@ -621,7 +632,7 @@ func TestMouse(t *testing.T) {
 	if !strings.Contains(text, "Remove") {
 		t.Fatalf("dialog button covers %q", text)
 	}
-	m = send(t, m, click(z))
+	m = click(t, m, z)
 	if m.scr != scrHome {
 		t.Fatal("clicking Remove must confirm")
 	}
