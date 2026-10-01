@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -101,7 +103,7 @@ func (m *Model) szFocus(f int) {
 	}
 }
 
-func (m Model) keySizing(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) keySizing(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	f := &m.szf
 	switch k.String() {
 	case "esc":
@@ -113,7 +115,7 @@ func (m Model) keySizing(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up":
 		m.szFocus((f.focus + soCount - 1) % soCount)
 		return m, nil
-	case "left", "right", " ":
+	case "left", "right", "space":
 		switch f.focus {
 		case soBasis:
 			if f.p.Basis == analysis.BasisRightsized {
@@ -141,7 +143,7 @@ func (m Model) keySizing(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		b := m.b
-		return m.busyCmd("Saving the sizing options…", "sizing-params", "", func() error { return b.SetSizingParams(p) })
+		return m.busyCmd("Saving the sizing options", "sizing-params", "", func() error { return b.SetSizingParams(p) })
 	}
 	var cmd tea.Cmd
 	if i, ok := szInput[f.focus]; ok {
@@ -182,58 +184,58 @@ func (m Model) readSizingForm() (analysis.SizingParams, int, error) {
 	return p, 0, nil
 }
 
-func (m Model) viewSizingOpts() string {
+func (m Model) viewSizingOpts() (string, []zone) {
+	t := m.th
 	f := m.szf
-	var b strings.Builder
-	b.WriteString(sBold.Render("Sizing options") + "\n")
-	b.WriteString(sMuted.Render("Used for every vCenter's sizing and kept across runs and upgrades.") + "\n\n")
+	var s stack
+	s.add(t.h1.Render("Sizing options"), t.mute.Render("Used for every vCenter's sizing and kept across runs and upgrades."), "")
 	row := func(fi int, label, val, help string) {
-		l := sLabel.Width(22).Render(label)
-		if f.focus == fi {
-			l = sFocus.Width(22).Render("› " + label)
-		}
 		if help != "" {
-			val += sMuted.Render("  " + help)
+			val += t.faint.Render("  " + help)
 		}
-		b.WriteString(l + val + "\n")
+		s.add(m.field(f.focus == fi, label, val))
 	}
 	in := func(fi int) string { return m.szIn[szInput[fi]].View() }
-	basis := "As provisioned"
-	if f.p.Basis == analysis.BasisRightsized {
-		basis = "Rightsized"
-	}
-	off := "Leave out"
-	if f.p.PoweredOff {
-		off = "Include"
-	}
-	row(soBasis, "Compute basis", choice(basis, f.focus == soBasis), "VMs as configured today, or after rightsizing")
-	row(soOff, "Powered-off VMs", choice(off, f.focus == soOff), "in compute; their storage always counts")
+	row(soBasis, "Compute basis", t.toggle(f.p.Basis == analysis.BasisRightsized, "As provisioned", "Rightsized", f.focus == soBasis), "")
+	s.add(m.hint("VMs as configured today, or after rightsizing"))
+	row(soOff, "Powered-off VMs", t.toggle(f.p.PoweredOff, "Leave out", "Include", f.focus == soOff), "")
+	s.add(m.hint("in compute; their storage always counts"), "")
 	row(soGrowth, "Growth %", in(soGrowth), "")
 	row(soRatio, "vCPU per core", in(soRatio), "0 = today's ratio, at least 4")
 	row(soCPU, "CPU target %", in(soCPU), "with the HA spares out")
 	row(soMem, "Memory target %", in(soMem), "")
 	row(soSpares, "HA spares per cluster", in(soSpares), "")
-	row(soSockets, "Sockets per node", choice(strconv.Itoa(f.p.Sockets), f.focus == soSockets), "")
+	row(soSockets, "Sockets per node", t.segmented([]string{"1", "2"}, f.p.Sockets-1, f.focus == soSockets), "")
 	row(soUplift, "Per-core uplift %", in(soUplift), "how much faster the new cores are")
 	row(soFree, "Storage kept free %", in(soFree), "")
 	row(soGroups, "Workload groups", in(soGroups), "")
-	b.WriteString(sLabel.Width(22).Render("") + sMuted.Render("name=pattern,pattern; … e.g. databases=sql*,*ora*; vdi=vdi-*") + "\n\n")
-	btn := sBox
+	s.add(m.hint("name=pattern,pattern; … e.g. databases=sql*,*ora*; vdi=vdi-*"), "")
+	focus := -1
 	if f.focus == soSave {
-		btn = btn.BorderForeground(accent).Foreground(accent).Bold(true)
+		focus = 0
 	}
-	b.WriteString(btn.Render("Save options") + "\n\n")
-	b.WriteString(keys("↑/↓", "move", "←/→", "change", "enter", "next/save", "esc", "cancel"))
-	return b.String()
+	btn, bz := t.buttons(focus, action{"Save options", "submit"})
+	s.addZoned(btn, submitZones(bz), 0)
+	return m.card(&s, true)
+}
+
+// section starts a block of the sizing tab.
+func (t theme) section(title, sub string) string {
+	out := t.h2.Render("◆ " + title)
+	if sub != "" {
+		out += t.faint.Render("  " + sub)
+	}
+	return out + "\n"
 }
 
 func (m Model) sizingView() string {
+	t := m.th
 	sz := m.sz
 	if sz == nil || m.szID != m.cur {
 		if m.szErr != "" {
-			return sMuted.Render(m.szErr)
+			return t.mute.Render(m.szErr)
 		}
-		return m.spin.View() + sMuted.Render(" Computing the sizing…")
+		return t.mute.Render("⋯ Computing the sizing…")
 	}
 	p := sz.Params
 	var b strings.Builder
@@ -241,8 +243,12 @@ func (m Model) sizingView() string {
 	if p.Ratio > 0 {
 		ratio = fmtNum(p.Ratio) + ":1"
 	}
-	b.WriteString(sMuted.Render(fmt.Sprintf("Sized %s · growth %s%% · vCPU/core %s · CPU ≤ %s%% · RAM ≤ %s%% · N+%d · %d-socket nodes",
-		analysis.BasisLabel(p.Basis), fmtNum(p.Growth), ratio, fmtNum(p.CPUTarget), fmtNum(p.MemTarget), p.Spares, p.Sockets)) + "\n\n")
+	chips := []string{analysis.BasisLabel(p.Basis), "growth " + fmtNum(p.Growth) + "%", "vCPU/core " + ratio, "CPU ≤ " + fmtNum(p.CPUTarget) + "%",
+		"RAM ≤ " + fmtNum(p.MemTarget) + "%", fmt.Sprintf("N+%d", p.Spares), fmt.Sprintf("%d-socket nodes", p.Sockets)}
+	for i, c := range chips {
+		chips[i] = lipgloss.NewStyle().Foreground(t.muted).Background(t.surface).Padding(0, 1).Render(c)
+	}
+	b.WriteString(strings.Join(chips, " ") + t.faint.Render("  o to change") + "\n\n")
 
 	bi := 0
 	if p.Basis == analysis.BasisRightsized {
@@ -253,48 +259,52 @@ func (m Model) sizingView() string {
 		w = max(w, min(len([]rune(c.Name)), 24))
 	}
 	pad := strings.Repeat(" ", w+3)
-	b.WriteString(sBold.Render("Recommended nodes") + "\n")
+	b.WriteString(t.section("Recommended nodes", ""))
 	for _, c := range sz.Clusters {
 		n := c.Needs[bi]
 		o, ok := n.Picked()
 		if !ok {
 			if n.Unsized() {
-				fmt.Fprintf(&b, "  %-*s %s\n", w, clip(c.Name, w), sWarn.Render("no node shape fits; left out of the totals, see the notes"))
+				fmt.Fprintf(&b, "  %-*s %s\n", w, clip(c.Name, w), t.wrn.Render("no node shape fits; left out of the totals, see the notes"))
 			}
 			continue
 		}
-		fmt.Fprintf(&b, "  %-*s %s  %s\n", w, clip(c.Name, w), sAccent.Render(o.String()), fmt.Sprintf("%d cores, today %d", o.TotalCores, c.Cores))
-		b.WriteString(pad + sMuted.Render(fmt.Sprintf("CPU %.0f%% · RAM %.0f%% with spares out · %s", o.CPUUtil, o.MemUtil, n.Ports)) + "\n")
+		fmt.Fprintf(&b, "  %-*s %s  %s\n", w, clip(c.Name, w), t.acc.Bold(true).Render(o.String()), t.mute.Render(fmt.Sprintf("%d cores, today %d", o.TotalCores, c.Cores)))
+		b.WriteString(pad + t.utilBar("CPU", o.CPUUtil) + "  " + t.utilBar("RAM", o.MemUtil) + t.faint.Render("  with spares out · "+n.Ports.String()) + "\n")
 	}
-	t := sz.Totals
-	nt, alt := t.For(p.Basis), t.For(analysis.OtherBasis(p.Basis))
-	fmt.Fprintf(&b, "  %-*s %s  %s\n", w, "Total", sBold.Render(fmt.Sprintf("%d nodes · %d cores · %s RAM", nt.Nodes, nt.Cores, analysis.GBLabel(nt.MemGB))),
-		sMuted.Render(fmt.Sprintf("today %d hosts · %d cores · %s", t.Hosts, t.Cores, analysis.Human(t.MemB))))
+	tt := sz.Totals
+	nt, alt := tt.For(p.Basis), tt.For(analysis.OtherBasis(p.Basis))
+	fmt.Fprintf(&b, "  %-*s %s  %s\n", w, "Total", t.gradient(fmt.Sprintf("%d nodes · %d cores · %s RAM", nt.Nodes, nt.Cores, analysis.GBLabel(nt.MemGB)), true),
+		t.mute.Render(fmt.Sprintf("today %d hosts · %d cores · %s", tt.Hosts, tt.Cores, analysis.Human(tt.MemB))))
 	other := "Rightsized"
 	if p.Basis == analysis.BasisRightsized {
 		other = "As provisioned"
 	}
-	b.WriteString(pad + sMuted.Render(fmt.Sprintf("%s instead: %d nodes · %d cores · %s RAM", other, alt.Nodes, alt.Cores, analysis.GBLabel(alt.MemGB))) + "\n\n")
+	b.WriteString(pad + t.faint.Render(fmt.Sprintf("%s instead: %d nodes · %d cores · %s RAM", other, alt.Nodes, alt.Cores, analysis.GBLabel(alt.MemGB))) + "\n\n")
 
-	b.WriteString(sBold.Render("Compute today") + "\n")
+	b.WriteString(t.section("Compute today", ""))
 	for _, c := range sz.Clusters {
 		fmt.Fprintf(&b, "  %-*s %d hosts · %d cores · %s RAM · %d vCPU (%.1f:1) · %s vRAM\n", w, clip(c.Name, w),
 			c.Hosts, c.Cores, analysis.Human(c.MemB), c.VCPU, c.Ratio, analysis.GiB(c.MemMB))
-		b.WriteString(pad + sMuted.Render(fmt.Sprintf("%d VMs on, %d off · CPU p%.0f %s, peak %s", c.VMs, c.VMsOff, sz.Percentile, ghz(c.DemandMHz), ghz(c.PeakMHz))) + "\n")
+		b.WriteString(pad + t.faint.Render(fmt.Sprintf("%d VMs on, %d off · CPU p%.0f %s, peak %s", c.VMs, c.VMsOff, sz.Percentile, ghz(c.DemandMHz), ghz(c.PeakMHz))) + "\n")
 	}
 
 	st := sz.Storage
-	b.WriteString("\n" + sBold.Render("Storage") + sMuted.Render("  raw used, before data reduction") + "\n")
-	fmt.Fprintf(&b, "  Raw used %s  %s\n", sAccent.Render(analysis.Human(st.RawUsed)),
-		sMuted.Render(fmt.Sprintf("disks %s · snapshots %s · other %s · templates %s · RDM %s", analysis.Human(st.VMDisks), analysis.Human(st.Snapshots), analysis.Human(st.Other), analysis.Human(st.Templates), analysis.Human(st.RDM))))
-	fmt.Fprintf(&b, "  Plan %s usable  %s\n", sAccent.Render(analysis.Human(st.Plan)),
-		sMuted.Render(fmt.Sprintf("+%s%% growth, %s%% free · provisioned %s", fmtNum(p.Growth), fmtNum(p.FreeSpace), analysis.Human(st.Provisioned))))
-	b.WriteString(sMuted.Render(fmt.Sprintf("  Not included: swap %s, orphaned disks %s", analysis.Human(st.Swap), analysis.Human(st.Orphans))) + "\n")
+	b.WriteString("\n" + t.section("Storage", "raw used, before data reduction"))
+	fmt.Fprintf(&b, "  Raw used %s  %s\n", t.acc.Bold(true).Render(analysis.Human(st.RawUsed)),
+		t.mute.Render(fmt.Sprintf("disks %s · snapshots %s · other %s · templates %s · RDM %s", analysis.Human(st.VMDisks), analysis.Human(st.Snapshots), analysis.Human(st.Other), analysis.Human(st.Templates), analysis.Human(st.RDM))))
+	fmt.Fprintf(&b, "  Plan %s usable  %s\n", t.acc.Bold(true).Render(analysis.Human(st.Plan)),
+		t.mute.Render(fmt.Sprintf("+%s%% growth, %s%% free · provisioned %s", fmtNum(p.Growth), fmtNum(p.FreeSpace), analysis.Human(st.Provisioned))))
+	b.WriteString(t.faint.Render(fmt.Sprintf("  Not included: swap %s, orphaned disks %s", analysis.Human(st.Swap), analysis.Human(st.Orphans))) + "\n")
 	var types []string
 	for _, u := range st.ByType {
 		types = append(types, fmt.Sprintf("%s %s %s", u.Type, u.Protocol, analysis.Human(u.Used)))
 	}
-	fmt.Fprintf(&b, "  Datastores %s used of %s  %s\n", analysis.Human(st.Used), analysis.Human(st.Capacity), sMuted.Render(strings.Join(types, " · ")))
+	used := 0.0
+	if st.Capacity > 0 {
+		used = float64(st.Used) / float64(st.Capacity) * 100
+	}
+	fmt.Fprintf(&b, "  Datastores %s used of %s %s  %s\n", analysis.Human(st.Used), analysis.Human(st.Capacity), t.utilBar("", used), t.mute.Render(strings.Join(types, " · ")))
 	if io := st.IO; io.Available {
 		src := ""
 		if io.Preview {
@@ -309,18 +319,18 @@ func (m Model) sizingView() string {
 		if io.Latency {
 			parts = append(parts, fmt.Sprintf("%.1f ms", io.LatencyMs))
 		}
-		fmt.Fprintf(&b, "  IOPS p%.0f %s  %s\n", sz.Percentile, sAccent.Render(report.Num(io.IOPS)), sMuted.Render(strings.Join(parts, " · ")+src))
+		fmt.Fprintf(&b, "  IOPS p%.0f %s  %s\n", sz.Percentile, t.acc.Bold(true).Render(report.Num(io.IOPS)), t.mute.Render(strings.Join(parts, " · ")+src))
 	} else {
-		b.WriteString(sMuted.Render("  Storage performance: waiting for the first samples.") + "\n")
+		b.WriteString(t.faint.Render("  Storage performance: waiting for the first samples.") + "\n")
 	}
 
-	b.WriteString("\n" + sBold.Render("Connectivity today") + "\n")
+	b.WriteString("\n" + t.section("Connectivity today", ""))
 	for _, c := range sz.Clusters {
 		parts := []string{}
 		if c.Links.NICs != "" {
 			nics := c.Links.NICs
 			if c.Links.NICsDown > 0 {
-				nics += fmt.Sprintf(" (+%d down)", c.Links.NICsDown)
+				nics += t.wrn.Render(fmt.Sprintf(" (+%d down)", c.Links.NICsDown))
 			}
 			parts = append(parts, nics)
 		}
@@ -334,47 +344,27 @@ func (m Model) sizingView() string {
 			parts = append(parts, "storage MTU "+c.Links.StorageMTU)
 		}
 		if len(parts) == 0 {
-			parts = append(parts, sMuted.Render("hardware details not read yet"))
+			parts = append(parts, t.faint.Render("hardware details not read yet"))
 		}
-		fmt.Fprintf(&b, "  %-*s %s\n", w, clip(c.Name, w), strings.Join(parts, " · "))
+		fmt.Fprintf(&b, "  %-*s %s\n", w, clip(c.Name, w), strings.Join(parts, t.faint.Render(" · ")))
 	}
 	if len(sz.Notes) > 0 {
-		b.WriteString("\n" + sBold.Render("Before you order") + sMuted.Render("  all notes are in the PDF") + "\n")
-		for i, n := range sz.Notes {
-			if i == 3 {
-				break
-			}
-			b.WriteString(sMuted.Render("  • "+clip(n, max(m.w-10, 40))) + "\n")
+		b.WriteString("\n" + t.section("Before you order", "all notes are in the PDF"))
+		for _, n := range sz.Notes {
+			b.WriteString(lipgloss.NewStyle().Width(m.vp.Width()).PaddingLeft(4).Render(t.wrn.Render("• ")+t.mute.Render(n)) + "\n")
 		}
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
-// scrolled shows the part of body that fits below `above` lines, from the
-// scroll offset.
-func (m Model) scrolled(body string, above int) string {
-	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-	avail := max(m.h-above-7, 6)
-	if len(lines) <= avail {
-		return body
+// utilBar shows a utilisation percentage as a short coloured gauge.
+func (t theme) utilBar(label string, pct float64) string {
+	const w = 10
+	n := int(min(max(pct, 0), 100)/100*w + 0.5)
+	s := t.load(pct)
+	out := s.Render(strings.Repeat("■", n)) + t.faint.Render(strings.Repeat("·", w-n)) + " " + s.Render(fmt.Sprintf("%.0f%%", pct))
+	if label != "" {
+		out = t.mute.Render(label+" ") + out
 	}
-	off := min(max(m.szScroll, 0), len(lines)-avail+1)
-	end := min(off+avail-1, len(lines))
-	out := strings.Join(lines[off:end], "\n")
-	more := fmt.Sprintf("  ↑/↓ scroll · lines %d-%d of %d", off+1, end, len(lines))
-	return out + "\n" + sMuted.Render(more)
-}
-
-func (m Model) scrollSizing(d int) Model {
-	n := strings.Count(m.sizingView(), "\n") + 1
-	m.szScroll = min(max(m.szScroll+d, 0), max(n-6, 0))
-	return m
-}
-
-func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n-1]) + "…"
+	return out
 }

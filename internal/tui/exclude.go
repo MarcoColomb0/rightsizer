@@ -2,10 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 )
@@ -64,23 +67,23 @@ func (m Model) openExclude() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.ex = excludeForm{
-		x:     analysis.Exclusion{VCenter: m.src.Config.Host, UUID: f.UUID, Name: f.VM, Path: f.Path},
-		kind:  f.Kind,
-		focus: exReason,
+		x:    analysis.Exclusion{VCenter: m.src.Config.Host, UUID: f.UUID, Name: f.VM, Path: f.Path},
+		kind: f.Kind,
 	}
 	if f.Path != "" {
 		m.ex.x.Name = ""
 	}
 	m.exNote.SetValue("")
+	m.exFocus(exReason)
 	m.ex.ret, m.scr, m.err = scrSource, scrExclude, ""
 	return m, nil
 }
 
 func (m Model) openPattern() (tea.Model, tea.Cmd) {
-	m.ex = excludeForm{pattern: true, focus: exTarget, ret: scrExclusions}
+	m.ex = excludeForm{pattern: true, ret: scrExclusions}
 	m.exName.SetValue("")
 	m.exNote.SetValue("")
-	m.exName.Focus()
+	m.exFocus(exTarget)
 	m.scr, m.err = scrExclude, ""
 	return m, nil
 }
@@ -100,7 +103,7 @@ func (m *Model) exFocus(f int) {
 	}
 }
 
-func (m Model) keyExclude(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) keyExclude(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc":
 		m.scr, m.err = m.ex.ret, ""
@@ -161,7 +164,7 @@ func (m Model) keyExclude(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		b := m.b
-		return m.busyCmd("Saving the exclusion…", "exclude", "", func() error { return b.Exclude(x) })
+		return m.busyCmd("Saving the exclusion", "exclude", "", func() error { return b.Exclude(x) })
 	}
 	var cmd tea.Cmd
 	switch m.ex.focus {
@@ -173,107 +176,164 @@ func (m Model) keyExclude(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) keyExclusions(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) keyExclusions(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.confirm == "unexclude" {
 		m.confirm = ""
-		if k.String() == "y" || k.String() == "Y" {
-			id := m.excl[m.exSel].ID
-			b := m.b
-			return m.busyCmd("Removing the exclusion…", "unexclude", "", func() error { return b.Unexclude(id) })
+		it, ok := m.exList.SelectedItem().(exclusionItem)
+		if ok && (k.String() == "y" || k.String() == "Y") {
+			id, b := it.ID, m.b
+			return m.busyCmd("Removing the exclusion", "unexclude", "", func() error { return b.Unexclude(id) })
 		}
 		return m, nil
 	}
-	switch k.String() {
-	case "esc", "q":
-		m.scr = scrHome
-	case "up", "k":
-		m.exSel = max(m.exSel-1, 0)
-	case "down", "j":
-		m.exSel = min(m.exSel+1, max(len(m.excl)-1, 0))
-	case "a":
-		return m.openPattern()
-	case "d", "delete", "backspace":
-		if len(m.excl) > 0 {
-			m.confirm = "unexclude"
+	if !m.exList.SettingFilter() {
+		switch k.String() {
+		case "esc", "q":
+			if m.exList.IsFiltered() {
+				m.exList.ResetFilter()
+				return m, nil
+			}
+			m.scr = scrHome
+			return m, nil
+		case "a":
+			return m.openPattern()
+		case "d", "delete", "backspace":
+			if m.exList.SelectedItem() != nil {
+				m.confirm = "unexclude"
+			}
+			return m, nil
 		}
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.exList, cmd = m.exList.Update(k)
+	return m, cmd
 }
 
-func (m Model) viewExclude() string {
-	var b strings.Builder
+func (m Model) viewExclude() (string, []zone) {
+	t := m.th
+	var s stack
 	title := "Exclude from recommendations"
 	if m.ex.pattern {
 		title = "Exclude VMs by name pattern"
 	}
-	b.WriteString(sBold.Render(title) + "\n")
-	b.WriteString(sMuted.Render("Excluded VMs count at their provisioned size and are listed with this justification in every report.") + "\n\n")
-	row := func(f int, label, val string) {
-		l := sLabel.Render(label)
-		if m.ex.focus == f {
-			l = sFocus.Width(16).Render("› " + label)
-		}
-		b.WriteString(l + val + "\n")
-	}
+	s.add(t.h1.Render(title), t.mute.Render("Excluded VMs count at their provisioned size and are listed with this justification in every report."), "")
+	f := m.ex.focus
 	switch {
 	case m.ex.pattern:
-		row(exTarget, "Name pattern", m.exName.View())
-		b.WriteString(sLabel.Render("") + sMuted.Render("* matches any text, e.g. citrix-* or *-vendor-??; applies to every vCenter") + "\n")
+		s.add(m.field(f == exTarget, "Name pattern", m.exName.View()), m.hint("* matches any text, e.g. citrix-* or *-vendor-??; applies to every vCenter"))
 	case m.ex.x.Path != "":
-		row(exTarget, "Disk", m.ex.x.Path)
+		s.add(m.field(false, "Disk", t.bold.Render(m.ex.x.Path)))
 	default:
-		row(exTarget, "VM", m.ex.x.Name+sMuted.Render("  ("+m.ex.x.VCenter+"; follows the VM if it is renamed)"))
+		s.add(m.field(false, "VM", t.bold.Render(m.ex.x.Name)), m.hint(m.ex.x.VCenter+"; follows the VM if it is renamed"))
 	}
-	row(exReason, "Reason", choice(analysis.Reasons[m.ex.reason], m.ex.focus == exReason))
-	scope := "All recommendations"
-	if m.ex.scope == 1 {
-		scope = "Only " + string(m.ex.kind)
+	s.add("")
+	s.add(m.field(f == exReason, "Reason", t.carousel(analysis.Reasons, m.ex.reason, f == exReason)))
+	scopes := []string{"All recommendations"}
+	if !m.ex.pattern && m.ex.kind != "" {
+		scopes = append(scopes, "Only "+string(m.ex.kind))
 	}
-	row(exScope, "Scope", choice(scope, m.ex.focus == exScope))
-	row(exReview, "Review", choice(reviews[m.ex.review].label, m.ex.focus == exReview))
-	row(exNote, "Note", m.exNote.View())
-	b.WriteString("\n")
-	btn := sBox
-	if m.ex.focus == exSave {
-		btn = btn.BorderForeground(accent).Foreground(accent).Bold(true)
+	s.add(m.field(f == exScope, "Scope", t.segmented(scopes, m.ex.scope, f == exScope)))
+	labels := make([]string, len(reviews))
+	for i, r := range reviews {
+		labels[i] = r.label
 	}
-	b.WriteString(btn.Render("Save exclusion") + "\n\n")
-	b.WriteString(keys("↑/↓", "move", "←/→", "change", "enter", "next/save", "esc", "cancel"))
-	return b.String()
+	s.add(m.field(f == exReview, "Review", t.segmented(labels, m.ex.review, f == exReview)))
+	s.add("")
+	s.add(lipgloss.JoinHorizontal(lipgloss.Top, m.field(f == exNote, "Note", ""), m.exNote.View()))
+	s.add(m.hint(fmt.Sprintf("%d/500 · ctrl+j new line", len([]rune(m.exNote.Value())))), "")
+	focus := -1
+	if f == exSave {
+		focus = 0
+	}
+	btn, bz := t.buttons(focus, action{"Save exclusion", "submit"})
+	s.addZoned(btn, submitZones(bz), 0)
+	return m.card(&s, true)
 }
 
 func (m Model) viewExclusions() string {
-	var b strings.Builder
-	b.WriteString(sBold.Render("Exclusions") + "\n")
-	b.WriteString(sMuted.Render("Kept across upgrades and applied to every current and future analysis.") + "\n\n")
+	t := m.th
+	head := t.h1.Render("Exclusions") + "\n" +
+		t.mute.Render("Kept across upgrades and applied to every current and future analysis.") + "\n"
 	if len(m.excl) == 0 {
-		b.WriteString(sMuted.Render("None yet. Press e on a finding, or a to add a name pattern.") + "\n\n")
+		return head + "\n" + t.callout("None yet. Press e on a finding, or a to add a name pattern.", t.info, m.bodyW())
 	}
-	now := time.Now()
-	for i, x := range m.excl {
-		cursor := "  "
-		if i == m.exSel {
-			cursor = sAccent.Render("▸ ")
-		}
-		where := x.VCenter
-		if where == "" {
-			where = "all vCenters"
-		}
-		review := ""
-		switch {
-		case x.Overdue(now):
-			review = sBad.Render("  review overdue since " + x.ReviewBy.Format("2006-01-02"))
-		case !x.ReviewBy.IsZero():
-			review = sMuted.Render("  review by " + x.ReviewBy.Format("2006-01-02"))
-		}
-		b.WriteString(cursor + sBold.Render(x.Target()) + sMuted.Render("  "+where+" · "+x.Scope()) + review + "\n")
-		b.WriteString("    " + x.Reason + ": " + x.Note + sMuted.Render(fmt.Sprintf("  (since %s)", x.Created.Format("2006-01-02"))) + "\n")
+	return head + "\n" + m.exList.View()
+}
+
+type exclusionItem struct{ analysis.Exclusion }
+
+func (i exclusionItem) FilterValue() string {
+	return strings.Join([]string{i.Target(), i.VCenter, i.Reason, i.Note}, " ")
+}
+
+func exclusionItems(xs []analysis.Exclusion) []list.Item {
+	out := make([]list.Item, len(xs))
+	for i, x := range xs {
+		out[i] = exclusionItem{x}
 	}
-	b.WriteString("\n")
-	if m.confirm == "unexclude" {
-		b.WriteString(sWarn.Render("Remove this exclusion? Its VMs get recommendations again. [y/N]"))
-	} else {
-		b.WriteString(keys("↑/↓", "select", "a", "add pattern", "d", "remove", "esc", "back"))
+	return out
+}
+
+// exclusionDelegate draws an exclusion over two lines.
+type exclusionDelegate struct{ t theme }
+
+func (d exclusionDelegate) Height() int                         { return 2 }
+func (d exclusionDelegate) Spacing() int                        { return 1 }
+func (d exclusionDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+
+func (d exclusionDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	x, ok := item.(exclusionItem)
+	if !ok {
+		return
 	}
-	return b.String()
+	t := d.t
+	bar, name := "  ", t.bold
+	if index == m.Index() {
+		bar, name = t.acc.Render("┃ "), t.acc.Bold(true)
+	}
+	where := x.VCenter
+	if where == "" {
+		where = "all vCenters"
+	}
+	var review string
+	switch {
+	case x.Overdue(time.Now()):
+		review = "  " + t.pill("review overdue since "+x.ReviewBy.Format("2006-01-02"), t.bad)
+	case !x.ReviewBy.IsZero():
+		review = t.faint.Render("  review by " + x.ReviewBy.Format("2006-01-02"))
+	}
+	width := m.Width() - 2
+	l1 := name.Render(clip(x.Target(), width/2)) + t.mute.Render("  "+where+" · "+x.Scope()) + review
+	l2 := t.wrn.Render(x.Reason) + t.faint.Render(": ") + clip(x.Note, width-len(x.Reason)-24) + t.faint.Render(fmt.Sprintf("  since %s", x.Created.Format("2006-01-02")))
+	fmt.Fprint(w, bar+l1+"\n"+bar+l2)
+}
+
+func newExclusionList() list.Model {
+	l := list.New(nil, exclusionDelegate{}, 80, 20)
+	l.SetShowTitle(false)
+	l.SetShowHelp(false)
+	l.SetStatusBarItemName("exclusion", "exclusions")
+	l.DisableQuitKeybindings()
+	l.FilterInput.Prompt = "/ "
+	return l
+}
+
+func styleExclusionList(l *list.Model, t theme) {
+	st := list.DefaultStyles(t.dark)
+	st.StatusBar = st.StatusBar.Foreground(t.muted)
+	st.StatusEmpty = t.faint
+	st.StatusBarActiveFilter = t.acc
+	st.StatusBarFilterCount = t.faint
+	st.NoItems = t.mute
+	st.ActivePaginationDot = t.acc
+	st.InactivePaginationDot = t.faint
+	st.DividerDot = t.faint
+	st.Filter.Focused.Prompt = t.acc.Bold(true)
+	st.Filter.Blurred.Prompt = t.faint
+	st.Filter.Cursor.Color = t.accent
+	l.Styles = st
+	l.FilterInput.SetStyles(st.Filter)
+	l.Paginator.ActiveDot = t.acc.Render("●")
+	l.Paginator.InactiveDot = t.faint.Render("●")
+	l.SetDelegate(exclusionDelegate{t})
 }

@@ -88,11 +88,15 @@ rightsizer
 2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
 3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
 
-On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `z` a combined sizing PDF, `o` edits the sizing options, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `/` searches forward and `?` backward as in vim (incremental, case-insensitive unless the pattern has capitals), `n`/`N` jump to the next or previous match, and `e` excludes the selected VM or disk. Inside a vCenter, the tabs show clusters (`1`), findings (`2`), peak analysis (`3`) and hardware refresh sizing (`4`). `p` builds its PDF (on the sizing tab, the sizing PDF and its CSV data), `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
+On the home screen, `enter` opens a vCenter, `p` builds a combined PDF, `z` a combined sizing PDF, `o` edits the sizing options, `x` manages exclusions, and `s` stops sharing reports. On the findings tab, `/` searches forward and `?` backward as in vim (incremental, case-insensitive unless the pattern has capitals), `n`/`N` jump to the next or previous match, and `e` excludes the selected VM or disk. Inside a vCenter, the tabs show an overview with clusters (`1`), findings (`2`), peak analysis (`3`) and hardware refresh sizing (`4`). `p` builds its PDF (on the sizing tab, the sizing PDF and its CSV data), `f` finishes early, `r` resumes a paused analysis, and `x` removes it with its data.
 
 Results marked **preview** come from vCenter's stored averages (5-minute to 2-hour samples). Averages smooth out short peaks, so preview utilisation reads low. Treat preview recommendations as a first look.
 
 A PDF is offered for download on a temporary HTTPS link shown in the console. When an analysis ends, its final report is shared automatically.
+
+`?` shows every key for the current screen. The mouse works too: click a vCenter, a tab, a finding or a button, and scroll with the wheel.
+
+The console adapts to light and dark terminals and looks best in one with true colour. [Ghostty](https://ghostty.org), [WezTerm](https://wezterm.org), [kitty](https://sw.kovidgoyal.net/kitty/) and [iTerm2](https://iterm2.com) on macOS and Linux, and [Windows Terminal](https://aka.ms/terminal) on Windows, also show collection progress in the tab or taskbar and make report links clickable. The macOS Terminal app works with fewer colours. Over SSH, terminals that report themselves as `xterm-256color` get 256 colours; add `SetEnv COLORTERM=truecolor` to the appliance's entry in `~/.ssh/config` for full colour.
 
 ## Security
 
@@ -111,7 +115,7 @@ Please report vulnerabilities privately through [GitHub security advisories](htt
 
 ## Updates
 
-When a release is available, the console offers it with a `[Y/n]` prompt, and `u` reopens it. Every upgrade protects your data:
+When a release is available, the console offers it when it opens, and `u` reopens the prompt. Every upgrade protects your data:
 
 1. download the new version while collection continues
 2. stop the engine cleanly
@@ -164,6 +168,7 @@ The sizing options (`o`) apply to every vCenter and are kept across upgrades: co
 make test       # unit tests and integration tests against the govmomi vCenter simulator
 make lint       # golangci-lint with the checks in .golangci.yml
 make build      # ./rightsizer
+make demo       # try the console with synthetic vCenters (ARGS="--appliance --update")
 make image      # rightsizer:local
 make demo-pdf   # sample report from synthetic data
 ```

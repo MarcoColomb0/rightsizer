@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -17,8 +17,8 @@ type hello struct{}
 
 func (hello) Init() tea.Cmd                       { return tea.Quit }
 func (hello) Update(tea.Msg) (tea.Model, tea.Cmd) { return hello{}, tea.Quit }
-func (hello) View() string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("#2DD4BF")).Render("console-ready")
+func (hello) View() tea.View {
+	return tea.NewView(lipgloss.NewStyle().Foreground(lipgloss.Color("#2DD4BF")).Render("console-ready"))
 }
 
 func start(t *testing.T) string {
@@ -113,14 +113,19 @@ func TestAuthAndConsoleOnly(t *testing.T) {
 
 func TestHostKeyIsKept(t *testing.T) {
 	path := t.TempDir() + "/ssh/host_ed25519"
-	a, err := hostKey(path)
-	if err != nil {
-		t.Fatal(err)
+	signer := func() gossh.Signer {
+		t.Helper()
+		pem, err := hostKey(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := gossh.ParsePrivateKey(pem)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
-	b, err := hostKey(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	a, b := signer(), signer()
 	if gossh.FingerprintSHA256(a.PublicKey()) != gossh.FingerprintSHA256(b.PublicKey()) {
 		t.Fatal("the host key must be reused, or clients see a changed fingerprint after restarts")
 	}

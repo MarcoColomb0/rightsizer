@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 )
 
 // search is a vim-style search over the findings table: / forward, ?
@@ -84,7 +84,7 @@ func (m Model) openSearch(backward bool) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) keySearchPrompt(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) keySearchPrompt(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc":
 		m.srch.prompt = false
@@ -111,7 +111,7 @@ func (m Model) keySearchPrompt(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "backspace":
 		if m.srchIn.Value() == "" {
-			return m.keySearchPrompt(tea.KeyMsg{Type: tea.KeyEsc})
+			return m.keySearchPrompt(press("esc"))
 		}
 	}
 	var cmd tea.Cmd
@@ -153,7 +153,7 @@ func (m Model) searchStatus() string {
 		if m.srch.backward {
 			lead = "?"
 		}
-		return sAccent.Render(lead) + m.srchIn.View()
+		return m.th.acc.Bold(true).Render(lead) + m.srchIn.View()
 	}
 	if m.srch.query == "" {
 		return ""
@@ -168,5 +168,5 @@ func (m Model) searchStatus() string {
 	if pos > 0 {
 		count = fmt.Sprintf("%d/%d", pos, len(m.srch.matches))
 	}
-	return sMuted.Render("/"+m.srch.query+"  ") + sAccent.Render(count) + sMuted.Render("  n/N next/previous · esc clear")
+	return m.th.mute.Render("/"+m.srch.query+"  ") + m.th.acc.Bold(true).Render(count) + m.th.faint.Render("  n/N next/previous · esc clear")
 }

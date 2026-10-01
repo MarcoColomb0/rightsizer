@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
-
-	"github.com/MarcoColomb0/rightsizer/internal/analysis"
-	"github.com/go-pdf/fpdf"
+	"codeberg.org/go-pdf/fpdf"
 	"golang.org/x/image/font/gofont/gobold"
 	"golang.org/x/image/font/gofont/goitalic"
 	"golang.org/x/image/font/gofont/goregular"
+
+	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 )
 
 const (

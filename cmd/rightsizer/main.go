@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,12 +16,13 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/backup"
 	"github.com/MarcoColomb0/rightsizer/internal/console"
+	"github.com/MarcoColomb0/rightsizer/internal/demo"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -41,6 +43,8 @@ func main() {
 	switch cmd {
 	case "tui":
 		err = runTUI()
+	case "demo":
+		err = runDemo(os.Args[2:])
 	case "daemon":
 		err = runDaemon()
 	case "status":
@@ -79,6 +83,7 @@ func usage() {
 
 Usage:
   rightsizer [tui]           open the interactive console (default)
+  rightsizer demo            try the console with synthetic vCenters
   rightsizer status          print a short status
   rightsizer export          write the latest PDF report to stdout
   rightsizer backup <file>   archive the data directory
@@ -236,7 +241,7 @@ func runTUI() error {
 		Latest:     os.Getenv("RIGHTSIZER_LATEST"),
 		ReleaseURL: os.Getenv("RIGHTSIZER_RELEASE_URL"),
 		CanUpgrade: true,
-	}), tea.WithAltScreen()).Run()
+	})).Run()
 	if err != nil {
 		return err
 	}
@@ -244,6 +249,29 @@ func runTUI() error {
 		os.Exit(tui.ExitUpgrade)
 	}
 	return nil
+}
+
+// runDemo opens the console on an in-memory engine with synthetic data. It
+// needs no vCenter, socket or data directory, and changes nothing.
+func runDemo(args []string) error {
+	fs := flag.NewFlagSet("demo", flag.ContinueOnError)
+	app := fs.Bool("appliance", false, "show the appliance console: restart notice and administrator settings")
+	upd := fs.Bool("update", false, "offer an upgrade when the console opens")
+	empty := fs.Bool("empty", false, "start without vCenter sources")
+	delay := fs.Duration("delay", 1200*time.Millisecond, "simulated time for slow operations")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	opt := tui.Options{Version: "v1.0.0", AdminSettings: *app, Appliance: *app, CanUpgrade: *upd}
+	if *upd {
+		opt.Latest, opt.ReleaseURL = "v1.1.0", "https://github.com/MarcoColomb0/rightsizer/releases"
+	}
+	b := demo.New(demo.Options{Appliance: *app, Delay: *delay, Empty: *empty})
+	m, err := tea.NewProgram(tui.New(b, opt)).Run()
+	if tm, ok := m.(tui.Model); ok && tm.UpgradeRequested() {
+		fmt.Println("demo: the upgrade would start now")
+	}
+	return err
 }
 
 func printStatus() error {
