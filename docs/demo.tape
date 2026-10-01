@@ -80,7 +80,7 @@ Tab
 Type "svc-rightsizer@vsphere.local"
 Sleep 700ms
 Tab
-Type "correct horse battery"
+Type "supersecurepassword"
 Sleep 700ms
 Tab
 Sleep 600ms
