@@ -9,7 +9,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.10
 	charm.land/lipgloss/v2 v2.0.6
 	charm.land/ssh v0.4.3
-	charm.land/wish/v2 v2.0.4
+	charm.land/wish/v2 v2.0.5
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/vmware/govmomi v0.56.0
