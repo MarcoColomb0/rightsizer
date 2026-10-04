@@ -1,0 +1,55 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    // Actions are pinned to a commit digest, with the version as a comment.
+    'helpers:pinGitHubActionDigests',
+    ':dependencyDashboard',
+  ],
+  timezone: 'Europe/Rome',
+  schedule: ['before 7am on monday'],
+  labels: ['dependencies'],
+  postUpdateOptions: ['gomodTidy'],
+  // Security fixes come straight away, outside the schedule.
+  vulnerabilityAlerts: {
+    enabled: true,
+    schedule: ['at any time'],
+    labels: ['dependencies', 'security'],
+  },
+  osvVulnerabilityAlerts: true,
+  packageRules: [
+    {
+      description: 'The Go toolchain and the golang build image move together',
+      matchDepNames: ['go', 'golang'],
+      groupName: 'Go',
+    },
+    {
+      description: 'Charm libraries share releases',
+      matchManagers: ['gomod'],
+      matchPackageNames: ['charm.land/**', 'github.com/charmbracelet/**'],
+      groupName: 'Charm',
+    },
+    {
+      description: 'One PR for minor and patch updates of each ecosystem',
+      matchUpdateTypes: ['minor', 'patch', 'digest', 'pinDigest'],
+      matchManagers: ['github-actions'],
+      groupName: 'GitHub Actions',
+    },
+    {
+      matchUpdateTypes: ['minor', 'patch'],
+      matchManagers: ['gomod'],
+      matchPackageNames: ['!go', '!charm.land/**', '!github.com/charmbracelet/**'],
+      groupName: 'Go modules',
+    },
+  ],
+  customManagers: [
+    {
+      description: 'golangci-lint version used in CI',
+      customType: 'regex',
+      managerFilePatterns: ['/^\\.github/workflows/.+\\.ya?ml$/'],
+      matchStrings: ['uses: golangci/golangci-lint-action@\\S+(?:\\s+#.*)?\\s+with:\\s+version: (?<currentValue>v\\S+)'],
+      depNameTemplate: 'golangci/golangci-lint',
+      datasourceTemplate: 'github-releases',
+    },
+  ],
+}
