@@ -199,7 +199,7 @@ func (m Model) keyExclusions(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.openPattern()
 		case "d", "delete", "backspace":
 			if m.exList.SelectedItem() != nil {
-				m.confirm = "unexclude"
+				m.ask("unexclude")
 			}
 			return m, nil
 		}

@@ -7,6 +7,7 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 ### Added
 
 - The update prompt shows what changed in every version since the installed one, with a link to the release page.
+- Prompts with two buttons, such as the update prompt and confirmation dialogs, can be answered with the arrow keys and enter. Dialogs open on Cancel, so a stray enter changes nothing.
 
 ### Changed
 

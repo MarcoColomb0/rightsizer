@@ -667,3 +667,37 @@ func TestUpdateNotes(t *testing.T) {
 	failing = send(t, run(failing, failing.fetchNotes()), failing.fetch()())
 	view(t, failing, "could not be loaded", "Upgrade now")
 }
+
+func TestTwoButtonPrompts(t *testing.T) {
+	left := tea.KeyPressMsg{Code: tea.KeyLeft}
+
+	f := fakeDemo()
+	m := New(f, Options{Version: "v1.0.0", Latest: "v1.1.0", CanUpgrade: true})
+	m = send(t, m, m.fetch()(), right, enter)
+	if m.scr != scrHome || m.UpgradeRequested() {
+		t.Fatal("right then enter must choose Later")
+	}
+	m = send(t, m, typ("u"), tab, tab)
+	if nm, _ := m.Update(enter); !asModel(nm).UpgradeRequested() {
+		t.Fatal("tab twice returns to Upgrade now")
+	}
+
+	f.sum.Reboot = []string{"kernel settings changed"}
+	m = New(f, Options{Version: "v1.0.0", Appliance: true})
+	m = send(t, m, m.fetch()(), typ("R"), enter)
+	if f.rebooted || m.confirm != "" {
+		t.Fatal("a dialog opens on Cancel, so enter alone must not act")
+	}
+	m = send(t, m, typ("R"), left, enter)
+	if !f.rebooted {
+		t.Fatal("left then enter must press Restart")
+	}
+
+	m = New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()())
+	m.scr, m.choice, m.cert = scrCert, 1, &vc.CertInfo{Fingerprint: "AA"}
+	m = send(t, m, enter)
+	if m.scr != scrSetup || f.added.Host != "" {
+		t.Fatal("the certificate screen opens on Back, so enter alone must not trust")
+	}
+}

@@ -147,10 +147,12 @@ type Model struct {
 	pwFocus  int
 
 	asked, upgrade bool
-	notes          []appliance.Note
-	notesErr       string
-	notesOff       int
-	bgKnown        bool
+	// choice is the highlighted button of a two-button prompt.
+	choice   int
+	notes    []appliance.Note
+	notesErr string
+	notesOff int
+	bgKnown  bool
 
 	ex     excludeForm
 	exNote textarea.Model
@@ -345,7 +347,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scr = scrHome
 			if !m.asked && m.updateAvailable() {
 				m.asked = true
-				m.scr = scrUpdate
+				m.showUpdate()
 			}
 		}
 		return m, nil
@@ -369,7 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.c.Trusted {
 			return m.add("")
 		}
-		m.scr = scrCert
+		m.scr, m.choice = scrCert, 1
 		return m, nil
 	case doneMsg:
 		return m.done(msg)
@@ -458,6 +460,17 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	}
+	// On two-button prompts the arrows and tab move between the buttons and
+	// enter presses the highlighted one; y and n stay as shortcuts.
+	if m.twoButtons() {
+		switch msg.String() {
+		case "left", "right", "h", "l", "tab", "shift+tab":
+			m.choice = 1 - m.choice
+			return m, nil
+		case "enter":
+			msg = press([]string{"y", "n"}[m.choice])
+		}
+	}
 	switch m.scr {
 	case scrHome:
 		return m.keyHome(msg)
@@ -487,6 +500,21 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Keys wait until the running operation finishes.
 	}
 	return m, nil
+}
+
+func (m Model) twoButtons() bool {
+	return m.confirm != "" || m.scr == scrCert || m.scr == scrUpdate
+}
+
+// ask opens a confirmation dialog with Cancel highlighted, so a stray enter
+// changes nothing.
+func (m *Model) ask(what string) {
+	m.confirm, m.choice = what, 1
+}
+
+// showUpdate opens the update prompt with "Upgrade now" highlighted.
+func (m *Model) showUpdate() {
+	m.scr, m.choice = scrUpdate, 0
 }
 
 // helpToggles reports whether ? opens the full help here: in text fields
@@ -683,11 +711,11 @@ func (m Model) keyHome(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "u":
 		if m.updateAvailable() {
-			m.scr = scrUpdate
+			m.showUpdate()
 		}
 	case "R":
 		if m.canReboot() {
-			m.confirm = "reboot"
+			m.ask("reboot")
 		}
 	}
 	m.pager.Page = m.sel / max(m.pager.PerPage, 1)
@@ -889,10 +917,10 @@ func (m Model) keySource(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "f":
 		if ph == engine.Running || ph == engine.NeedPassword {
-			m.confirm = "finish"
+			m.ask("finish")
 		}
 	case "x":
-		m.confirm = "remove"
+		m.ask("remove")
 	case "r":
 		if ph == engine.NeedPassword {
 			if m.sum != nil && m.sum.Vault.Enabled && !m.sum.Vault.Locked {
@@ -903,7 +931,7 @@ func (m Model) keySource(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "u":
 		if m.updateAvailable() {
-			m.scr = scrUpdate
+			m.showUpdate()
 		}
 	case "e":
 		if m.tab == tabFindings {

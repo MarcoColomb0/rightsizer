@@ -233,11 +233,11 @@ func (m Model) modal() (string, []zone) {
 	if danger {
 		c = t.bad
 	}
-	btns, bz := t.buttons(0, action{yes, "y"}, action{"Cancel", "n"})
+	btns, bz := t.buttons(m.choice, action{yes, "y"}, action{"Cancel", "n"})
 	var s stack
 	s.add(lipgloss.NewStyle().Foreground(c).Bold(true).Render("▲ "+title), "", t.mute.Width(54).Render(text), "")
 	s.addZoned(btns, bz, 0)
-	s.add(t.faint.Render("y confirm · n or esc cancel"))
+	s.add(t.faint.Render("←/→ choose · enter select · y confirm · n or esc cancel"))
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(c).Padding(1, 3).Render(s.String())
 	return box, shift(s.zones, 4, 2)
 }
@@ -450,7 +450,7 @@ func (m Model) keyMap() keyMap {
 		more = bind("?", "less")
 	}
 	if m.confirm != "" {
-		return keyMap{short: []key.Binding{bind("y", "confirm"), bind("n", "cancel")}}
+		return keyMap{short: []key.Binding{bind("←/→", "choose"), bind("enter", "select"), bind("y", "confirm"), bind("n", "cancel")}}
 	}
 	switch m.scr {
 	case scrLoading:
@@ -481,13 +481,13 @@ func (m Model) keyMap() keyMap {
 	case scrSetup, scrExclude, scrSizing:
 		return keyMap{short: []key.Binding{bind("↑/↓", "move"), bind("←/→", "change"), bind("enter", "next/save"), bind("esc", "cancel")}}
 	case scrCert:
-		return keyMap{short: []key.Binding{bind("y", "trust and start"), bind("n", "back")}}
+		return keyMap{short: []key.Binding{bind("←/→", "choose"), bind("enter", "select"), bind("y", "trust and start"), bind("n", "back")}}
 	case scrResume:
 		return keyMap{short: []key.Binding{bind("enter", "resume"), bind("esc", "back")}}
 	case scrSettings:
 		return keyMap{short: []key.Binding{bind("↑/↓", "move"), bind("enter", "next/save"), bind("esc", "cancel")}}
 	case scrUpdate:
-		k := []key.Binding{bind("y", "upgrade now"), bind("n", "later")}
+		k := []key.Binding{bind("←/→", "choose"), bind("enter", "select"), bind("y", "upgrade now"), bind("n", "later")}
 		if len(m.notes) > 0 {
 			k = append(k, bind("↑/↓", "scroll notes"))
 		}

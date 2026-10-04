@@ -152,7 +152,7 @@ func (m Model) viewCert() (string, []zone) {
 	kv("Expires", exp)
 	s.add("", "  "+t.label.Render("SHA-256")+t.acc.Bold(true).Render(wrapFP(c.Fingerprint, 2+22)), "")
 	s.add(t.mute.Render("The fingerprint is pinned for this source. Any other certificate will be refused."), "")
-	btn, bz := t.buttons(0, action{"Trust and start", "y"}, action{"Back", "n"})
+	btn, bz := t.buttons(m.choice, action{"Trust and start", "y"}, action{"Back", "n"})
 	s.addZoned(btn, bz, 0)
 	return m.card(&s, true)
 }
@@ -232,7 +232,7 @@ func (m Model) viewUpdate() (string, []zone) {
 		}
 	}
 	after.add("")
-	btn, bz := t.buttons(0, action{"Upgrade now", "y"}, action{"Later", "n"})
+	btn, bz := t.buttons(m.choice, action{"Upgrade now", "y"}, action{"Later", "n"})
 	after.addZoned(btn, bz, 0)
 
 	if m.notes != nil || m.notesErr != "" || m.opt.Notes != nil {
