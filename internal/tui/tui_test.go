@@ -646,13 +646,13 @@ func TestUpdateNotes(t *testing.T) {
 		fmt.Fprintf(&long, "- change %d\n", i)
 	}
 	notes := []appliance.Note{
-		{Tag: "v1.2.0", Body: "### Added\n- **Bold** feature with `code` and [a link](https://example.com)\n\n**Full Changelog**: https://x/compare/v1.1.0...v1.2.0"},
+		{Tag: "v1.2.0", Body: "### Added\n- **Bold** feature with `code` and [a link](https://example.com)\n\n## What's Changed\n* Update module x by @renovate[bot]\n\n**Full Changelog**: https://x/compare/v1.1.0...v1.2.0"},
 		{Tag: "v1.1.0", Body: "### Fixed\n" + long.String()},
 	}
 	m := New(f, Options{Version: "v1.0.0", Latest: "v1.2.0", CanUpgrade: true, Notes: func() ([]appliance.Note, error) { return notes, nil }})
 	m = send(t, run(m, m.fetchNotes()), m.fetch()())
 	v := view(t, m, "What's new", "v1.2.0", "Bold feature with code and a link", "Fixed", "↑/↓ to scroll")
-	if strings.Contains(v, "**") || strings.Contains(v, "Full Changelog") {
+	if strings.Contains(v, "**") || strings.Contains(v, "Full Changelog") || strings.Contains(v, "renovate") {
 		t.Fatalf("Markdown must be rendered:\n%s", v)
 	}
 	if strings.Contains(v, "change 39") {

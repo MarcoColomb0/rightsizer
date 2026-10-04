@@ -198,8 +198,14 @@ jobs:
       - uses: actions/attest-build-provenance@v4
         with:
           subject-path: install.sh
-      - run: sh .github/release-notes.sh "$GITHUB_REF_NAME" > release-notes.md
-      # The notes come from CHANGELOG.md; GitHub appends the compare link.
-      - run: gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --notes-file release-notes.md --generate-notes --title "rightsizer $GITHUB_REF_NAME"
+      # The notes are the version's section of CHANGELOG.md and a link to
+      # the changes since the previous release.
+      - run: |
+          sh .github/release-notes.sh "$GITHUB_REF_NAME" > release-notes.md
+          prev="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [ -n "$prev" ] && [ "$prev" != "$GITHUB_REF_NAME" ]; then
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME" >> release-notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --notes-file release-notes.md --title "rightsizer $GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}

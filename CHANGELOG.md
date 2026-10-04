@@ -4,6 +4,10 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ## Unreleased
 
+### Fixed
+
+- Release notes list only the changes from the changelog, without the automatically generated list of merged pull requests.
+
 ## v1.1.0 - 2026-10-04
 
 ### Added

@@ -64,12 +64,16 @@ func (m Model) renderNotes(w int) []string {
 		top := len(out)
 		for l := range strings.SplitSeq(strings.ReplaceAll(n.Body, "\r", ""), "\n") {
 			trim := strings.TrimSpace(l)
+			if strings.HasPrefix(trim, "## ") {
+				// Sections GitHub adds, such as the list of merged PRs.
+				break
+			}
 			switch {
 			case trim == "":
 				if len(out) > top {
 					blank()
 				}
-			case strings.HasPrefix(trim, "**Full Changelog**"), strings.HasPrefix(trim, "# "), strings.HasPrefix(trim, "## "):
+			case strings.HasPrefix(trim, "**Full Changelog**"), strings.HasPrefix(trim, "# "):
 			case strings.HasPrefix(trim, "### "):
 				if len(out) > top {
 					blank()
