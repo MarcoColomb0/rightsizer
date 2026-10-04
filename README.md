@@ -70,7 +70,7 @@ ssh admin@<appliance-address>
 **Docker on Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MarcoColomb0/rightsizer/main/install.sh | sudo bash
+curl -fsSL https://github.com/MarcoColomb0/rightsizer/releases/latest/download/install.sh | sudo bash
 rightsizer
 ```
 

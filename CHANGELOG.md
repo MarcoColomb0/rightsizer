@@ -10,6 +10,7 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ### Changed
 
+- The install command downloads the installer from the latest release instead of the main branch, so it is always a published, checksummed version.
 - The appliance's Flatcar Container Linux release and all dependencies are now kept up to date automatically.
 
 ## v1.0.0 - 2026-10-01

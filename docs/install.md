@@ -27,8 +27,18 @@ Change the administrator password from the console (`c`) after the first login. 
 Install [Docker Engine](https://docs.docker.com/engine/install/) for your distribution, then:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MarcoColomb0/rightsizer/main/install.sh | sudo bash
+curl -fsSL https://github.com/MarcoColomb0/rightsizer/releases/latest/download/install.sh | sudo bash
 rightsizer
+```
+
+The installer comes from the latest release, whose files cannot change once published. To check it before running it:
+
+```bash
+base=https://github.com/MarcoColomb0/rightsizer/releases/latest/download
+curl -fsSLO "$base/install.sh" && curl -fsSLO "$base/SHA256SUMS"
+grep '  install.sh$' SHA256SUMS | sha256sum -c -
+gh attestation verify install.sh --repo MarcoColomb0/rightsizer   # optional: build provenance
+sudo bash install.sh
 ```
 
 | Installer option | Default | |

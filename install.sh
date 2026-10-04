@@ -50,7 +50,7 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(uname -s)" = "Linux" ] || die "rightsizer supports Linux hosts only."
-[ "$(id -u)" -eq 0 ] || die "run as root, e.g.: curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo bash"
+[ "$(id -u)" -eq 0 ] || die "run as root, e.g.: curl -fsSL https://github.com/${REPO}/releases/latest/download/install.sh | sudo bash"
 command -v docker >/dev/null 2>&1 || die "Docker is required. Install it first: https://docs.docker.com/engine/install/"
 docker info >/dev/null 2>&1 || die "Docker is installed but the daemon is not running (try: systemctl start docker)."
 command -v curl >/dev/null 2>&1 || die "curl is required."
