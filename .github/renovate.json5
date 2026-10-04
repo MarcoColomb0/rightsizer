@@ -51,5 +51,22 @@
       depNameTemplate: 'golangci/golangci-lint',
       datasourceTemplate: 'github-releases',
     },
+    {
+      description: 'Flatcar Container Linux LTS release the appliance is built on',
+      customType: 'regex',
+      managerFilePatterns: ['/^appliance/flatcar\\.env$/'],
+      matchStrings: ['FLATCAR_VERSION=(?<currentValue>\\S+)'],
+      depNameTemplate: 'flatcar-lts',
+      datasourceTemplate: 'custom.flatcar-lts',
+      // A new major is a new LTS stream and comes as its own PR.
+      versioningTemplate: 'regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$',
+    },
   ],
+  customDatasources: {
+    'flatcar-lts': {
+      defaultRegistryUrlTemplate: 'https://www.flatcar.org/releases-json/releases-lts.json',
+      // The feed is keyed by version, plus "current" aliases to skip.
+      transformTemplates: ['{"releases": [$keys($)[$contains($, /^[0-9]+[.][0-9]+[.][0-9]+$/)].{"version": $}]}'],
+    },
+  },
 }
