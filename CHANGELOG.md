@@ -4,6 +4,8 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ## Unreleased
 
+## v1.1.0 - 2026-10-04
+
 ### Added
 
 - The update prompt shows what changed in every version since the installed one, with a link to the release page.
