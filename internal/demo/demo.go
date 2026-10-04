@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/demo/sample"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
@@ -418,4 +419,13 @@ func (b *Backend) SetSizingParams(p analysis.SizingParams) error {
 	defer b.mu.Unlock()
 	b.params = p
 	return nil
+}
+
+// Notes are sample release notes for the update prompt.
+func Notes() []appliance.Note {
+	now := time.Now()
+	return []appliance.Note{
+		{Tag: "v1.1.0", Date: now.Add(-2 * 24 * time.Hour), Body: "### Added\n- **Changelog in the console:** the update prompt lists what changed in every version since yours.\n- Sizing CSV includes the `NUMA fit` of each node option.\n\n### Fixed\n- Paused analyses resume after a restart once an administrator logs in.\n\n**Full Changelog**: https://github.com/MarcoColomb0/rightsizer/compare/v1.0.1...v1.1.0"},
+		{Tag: "v1.0.1", Date: now.Add(-12 * 24 * time.Hour), Body: "### Fixed\n- Report links work behind a host name with upper-case letters.\n- The heatmap legend no longer overlaps the last weekday on narrow terminals."},
+	}
 }

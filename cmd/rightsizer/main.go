@@ -147,7 +147,7 @@ func runDaemon() error {
 	errc := make(chan error, 2)
 	go func() { errc <- ipc.Serve(ctx, socket(), ipc.Local{E: e, Host: host}) }()
 	if applianceMode() {
-		checker := &appliance.Checker{}
+		checker := &appliance.Checker{Current: version}
 		if env("RIGHTSIZER_UPDATE_CHECK", "true") == "true" {
 			go checker.Run(ctx, 6*time.Hour)
 		}
@@ -163,6 +163,7 @@ func runDaemon() error {
 				r := checker.Latest()
 				return tui.New(ipc.Local{E: e, Host: host}, tui.Options{
 					Version: version, Latest: r.Tag, ReleaseURL: r.URL,
+					Notes:      func() ([]appliance.Note, error) { return r.Notes, nil },
 					CanUpgrade: true, AdminSettings: true, Appliance: true,
 				})
 			},
@@ -240,6 +241,12 @@ func runTUI() error {
 		Version:    version,
 		Latest:     os.Getenv("RIGHTSIZER_LATEST"),
 		ReleaseURL: os.Getenv("RIGHTSIZER_RELEASE_URL"),
+		// Only asked for when the launcher offers an update, so turning
+		// update checks off also keeps the console from contacting GitHub.
+		Notes: func() ([]appliance.Note, error) {
+			r, err := appliance.Fetch(context.Background(), version)
+			return r.Notes, err
+		},
 		CanUpgrade: true,
 	})).Run()
 	if err != nil {
@@ -265,6 +272,7 @@ func runDemo(args []string) error {
 	opt := tui.Options{Version: "v1.0.0", AdminSettings: *app, Appliance: *app, CanUpgrade: *upd}
 	if *upd {
 		opt.Latest, opt.ReleaseURL = "v1.1.0", "https://github.com/MarcoColomb0/rightsizer/releases"
+		opt.Notes = func() ([]appliance.Note, error) { return demo.Notes(), nil }
 	}
 	b := demo.New(demo.Options{Appliance: *app, Delay: *delay, Empty: *empty})
 	m, err := tea.NewProgram(tui.New(b, opt)).Run()

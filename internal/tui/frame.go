@@ -360,6 +360,12 @@ func (m Model) wheel(up bool) (tea.Model, tea.Cmd) {
 		} else {
 			m.exList.CursorDown()
 		}
+	case m.scr == scrUpdate:
+		if up {
+			m.scrollNotes(-3)
+		} else {
+			m.scrollNotes(3)
+		}
 	}
 	return m, nil
 }
@@ -481,7 +487,11 @@ func (m Model) keyMap() keyMap {
 	case scrSettings:
 		return keyMap{short: []key.Binding{bind("↑/↓", "move"), bind("enter", "next/save"), bind("esc", "cancel")}}
 	case scrUpdate:
-		return keyMap{short: []key.Binding{bind("y", "upgrade now"), bind("n", "later")}}
+		k := []key.Binding{bind("y", "upgrade now"), bind("n", "later")}
+		if len(m.notes) > 0 {
+			k = append(k, bind("↑/↓", "scroll notes"))
+		}
+		return keyMap{short: k}
 	case scrExclusions:
 		if m.exList.SettingFilter() {
 			return keyMap{short: []key.Binding{bind("enter", "apply filter"), bind("esc", "clear")}}

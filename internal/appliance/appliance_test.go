@@ -49,3 +49,30 @@ func TestRebootFlags(t *testing.T) {
 		t.Fatalf("got %q", b)
 	}
 }
+
+func TestLatestOf(t *testing.T) {
+	list := []release{
+		{TagName: "v1.0.0", Body: "first"},
+		{TagName: "v1.2.0", Body: "### Fixed\n- b"},
+		{TagName: "v1.3.0-rc1", Prerelease: true},
+		{TagName: "v1.1.0", Body: "### Added\n- a"},
+		{TagName: "v2.0.0", Draft: true},
+		{TagName: "nightly"},
+	}
+	r, err := latestOf(list, "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Tag != "v1.2.0" || r.URL != "https://github.com/"+Repo+"/releases/tag/v1.2.0" {
+		t.Fatalf("latest: %+v", r)
+	}
+	if len(r.Notes) != 2 || r.Notes[0].Tag != "v1.2.0" || r.Notes[1].Tag != "v1.1.0" {
+		t.Fatalf("notes must cover every newer release, newest first: %+v", r.Notes)
+	}
+	if r, _ := latestOf(list, "v1.2.0"); len(r.Notes) != 0 {
+		t.Fatalf("no notes when up to date: %+v", r.Notes)
+	}
+	if _, err := latestOf(list[2:3], "v1.0.0"); err == nil {
+		t.Fatal("prereleases alone are not a release")
+	}
+}

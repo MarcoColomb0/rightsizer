@@ -31,10 +31,22 @@ var tagRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 type Release struct {
 	Tag string
 	URL string
+	// Notes covers every release newer than the running version up to Tag,
+	// newest first, so skipping versions shows everything that changed.
+	Notes []Note
+}
+
+// Note is the release notes of one version, in Markdown.
+type Note struct {
+	Tag  string
+	Date time.Time
+	Body string
 }
 
 // Checker polls GitHub for the latest release.
 type Checker struct {
+	Current string
+
 	mu     sync.Mutex
 	latest Release
 }
@@ -47,7 +59,7 @@ func (c *Checker) Latest() Release {
 
 func (c *Checker) Run(ctx context.Context, every time.Duration) {
 	for {
-		if r, err := fetchLatest(ctx); err == nil {
+		if r, err := Fetch(ctx, c.Current); err == nil {
 			c.mu.Lock()
 			c.latest = r
 			c.mu.Unlock()
@@ -60,10 +72,17 @@ func (c *Checker) Run(ctx context.Context, every time.Duration) {
 	}
 }
 
-func fetchLatest(ctx context.Context) (Release, error) {
+const (
+	maxNotes    = 20
+	maxNoteSize = 16 << 10
+)
+
+// Fetch reads the published releases and returns the latest one with the
+// notes of every release newer than current.
+func Fetch(ctx context.Context, current string) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+Repo+"/releases/latest", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+Repo+"/releases?per_page=50", nil)
 	if err != nil {
 		return Release{}, err
 	}
@@ -76,16 +95,59 @@ func fetchLatest(ctx context.Context) (Release, error) {
 	if res.StatusCode != http.StatusOK {
 		return Release{}, fmt.Errorf("release check: %s", res.Status)
 	}
-	var body struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body); err != nil {
+	var list []release
+	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&list); err != nil {
 		return Release{}, err
 	}
-	if !tagRE.MatchString(body.TagName) {
-		return Release{}, errors.New("unexpected release tag")
+	return latestOf(list, current)
+}
+
+type release struct {
+	TagName     string    `json:"tag_name"`
+	Body        string    `json:"body"`
+	Draft       bool      `json:"draft"`
+	Prerelease  bool      `json:"prerelease"`
+	PublishedAt time.Time `json:"published_at"`
+}
+
+func latestOf(list []release, current string) (Release, error) {
+	var notes []Note
+	latest := ""
+	for _, r := range list {
+		if r.Draft || r.Prerelease || !tagRE.MatchString(r.TagName) {
+			continue
+		}
+		if latest == "" || version.Newer(r.TagName, latest) {
+			latest = r.TagName
+		}
+		if version.Newer(r.TagName, current) {
+			notes = append(notes, Note{Tag: r.TagName, Date: r.PublishedAt, Body: clipNote(r.Body)})
+		}
 	}
-	return Release{Tag: body.TagName, URL: "https://github.com/" + Repo + "/releases/tag/" + body.TagName}, nil
+	if latest == "" {
+		return Release{}, errors.New("no published release")
+	}
+	slices.SortFunc(notes, func(a, b Note) int {
+		switch {
+		case version.Newer(a.Tag, b.Tag):
+			return -1
+		case version.Newer(b.Tag, a.Tag):
+			return 1
+		}
+		return 0
+	})
+	return Release{Tag: latest, URL: "https://github.com/" + Repo + "/releases/tag/" + latest, Notes: notes[:min(len(notes), maxNotes)]}, nil
+}
+
+func clipNote(s string) string {
+	if len(s) <= maxNoteSize {
+		return s
+	}
+	s = s[:maxNoteSize]
+	if i := strings.LastIndexByte(s, '\n'); i > 0 {
+		s = s[:i]
+	}
+	return s + "\n…"
 }
 
 type Host struct {

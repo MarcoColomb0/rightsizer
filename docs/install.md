@@ -52,7 +52,7 @@ rightsizer
 
 ## Upgrades
 
-When a release is available, the console offers it when it opens, and `u` reopens the prompt. Every upgrade protects your data:
+When a release is available, the console offers it when it opens, and `u` reopens the prompt. The prompt lists what changed in every version since the installed one, from [CHANGELOG.md](../CHANGELOG.md), with a link to the release page. Every upgrade protects your data:
 
 1. download the new version while collection continues
 2. stop the engine cleanly

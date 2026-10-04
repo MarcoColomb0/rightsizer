@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/demo"
 )
 
@@ -60,9 +61,10 @@ func screens(t *testing.T, w, h int, dark bool) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	b := demo.New(demo.Options{Appliance: true})
-	m := New(b, Options{Version: "v1.0.0", Latest: "v1.1.0", CanUpgrade: true, AdminSettings: true, Appliance: true})
+	m := New(b, Options{Version: "v1.0.0", Latest: "v1.1.0", ReleaseURL: "https://github.com/MarcoColomb0/rightsizer/releases/tag/v1.1.0", CanUpgrade: true, AdminSettings: true, Appliance: true,
+		Notes: func() ([]appliance.Note, error) { return demo.Notes(), nil }})
 	m.applyTheme(dark)
-	m = send(t, m, tea.WindowSizeMsg{Width: w, Height: h})
+	m = run(send(t, m, tea.WindowSizeMsg{Width: w, Height: h}), m.fetchNotes())
 	snap := func(name string, mm Model) {
 		out[name] = mm.View().Content
 	}

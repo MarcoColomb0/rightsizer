@@ -213,17 +213,9 @@ func (m Model) viewUpdate() (string, []zone) {
 	if m.opt.ReleaseURL != "" {
 		s.add("  " + t.label.Render("Release notes") + t.link(m.opt.ReleaseURL, m.opt.ReleaseURL))
 	}
-	s.add("")
-	steps := []string{
-		"Download the new version while collection keeps running",
-		"Stop the engine cleanly so every sample is saved",
-		"Back up collected data and reports",
-		"Start the new version and check that the data loaded",
-		"Roll back automatically if anything fails",
-	}
-	for i, st := range steps {
-		s.add("  " + t.acc.Bold(true).Render(fmt.Sprintf("%d", i+1)) + t.faint.Render(" │ ") + st)
-	}
+
+	var after stack
+	after.add("", t.faint.Render("The upgrade downloads first, stops the engine cleanly, backs up your data, and rolls back on its own if anything fails."))
 	if m.sum != nil {
 		for _, src := range m.sum.Sources {
 			if src.Phase == engine.Running || src.Phase == engine.NeedPassword {
@@ -234,13 +226,36 @@ func (m Model) viewUpdate() (string, []zone) {
 				if !m.sum.Vault.Enabled {
 					msg += " You will be asked for their vCenter passwords again."
 				}
-				s.add("", t.callout(msg+"\n"+t.mute.Render("vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap."), t.warn, 86))
+				after.add("", t.callout(msg+"\n"+t.mute.Render("vCenter keeps one hour of real-time samples, so a short upgrade leaves no gap."), t.warn, m.notesWidth()))
 				break
 			}
 		}
 	}
-	s.add("")
+	after.add("")
 	btn, bz := t.buttons(0, action{"Upgrade now", "y"}, action{"Later", "n"})
-	s.addZoned(btn, bz, 0)
+	after.addZoned(btn, bz, 0)
+
+	if m.notes != nil || m.notesErr != "" || m.opt.Notes != nil {
+		s.add("")
+		lines := m.renderNotes(m.notesWidth())
+		h := max(m.bodyH()-s.h-after.h-6, 3)
+		head := t.h2.Render("What's new")
+		if len(lines) > h {
+			head += t.faint.Render("  ↑/↓ to scroll")
+		}
+		s.add(head)
+		switch {
+		case len(lines) > 0:
+			off := min(m.notesOff, max(len(lines)-h, 0))
+			s.add(strings.Join(lines[off:min(off+h, len(lines))], "\n"))
+		case m.notesErr != "":
+			s.add(t.faint.Render("The release notes could not be loaded; they are on the release page."))
+		case m.notes != nil:
+			s.add(t.faint.Render("No notes for this release."))
+		default:
+			s.add(m.spin.View() + t.mute.Render(" Loading the release notes…"))
+		}
+	}
+	s.addZoned(after.String(), after.zones, 0)
 	return m.card(&s, true)
 }

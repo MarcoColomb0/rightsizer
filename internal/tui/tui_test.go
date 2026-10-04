@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/list"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
@@ -166,7 +167,7 @@ func run(m Model, cmd tea.Cmd) Model {
 		for _, c := range msg {
 			m = run(m, c)
 		}
-	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg, sizingMsg, sizingParamsMsg, list.FilterMatchesMsg:
+	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg, sizingMsg, sizingParamsMsg, notesMsg, list.FilterMatchesMsg:
 		nm, next := m.Update(msg)
 		m = run(asModel(nm), next)
 	}
@@ -636,4 +637,33 @@ func TestMouse(t *testing.T) {
 	if m.scr != scrHome {
 		t.Fatal("clicking Remove must confirm")
 	}
+}
+
+func TestUpdateNotes(t *testing.T) {
+	f := fakeDemo()
+	var long strings.Builder
+	for i := range 40 {
+		fmt.Fprintf(&long, "- change %d\n", i)
+	}
+	notes := []appliance.Note{
+		{Tag: "v1.2.0", Body: "### Added\n- **Bold** feature with `code` and [a link](https://example.com)\n\n**Full Changelog**: https://x/compare/v1.1.0...v1.2.0"},
+		{Tag: "v1.1.0", Body: "### Fixed\n" + long.String()},
+	}
+	m := New(f, Options{Version: "v1.0.0", Latest: "v1.2.0", CanUpgrade: true, Notes: func() ([]appliance.Note, error) { return notes, nil }})
+	m = send(t, run(m, m.fetchNotes()), m.fetch()())
+	v := view(t, m, "What's new", "v1.2.0", "Bold feature with code and a link", "Fixed", "↑/↓ to scroll")
+	if strings.Contains(v, "**") || strings.Contains(v, "Full Changelog") {
+		t.Fatalf("Markdown must be rendered:\n%s", v)
+	}
+	if strings.Contains(v, "change 39") {
+		t.Fatal("long notes must scroll inside the card")
+	}
+	for range 60 {
+		m = send(t, m, down)
+	}
+	view(t, m, "change 39", "Upgrade now")
+
+	failing := New(f, Options{Version: "v1.0.0", Latest: "v1.2.0", CanUpgrade: true, Notes: func() ([]appliance.Note, error) { return nil, errors.New("offline") }})
+	failing = send(t, run(failing, failing.fetchNotes()), failing.fetch()())
+	view(t, failing, "could not be loaded", "Upgrade now")
 }

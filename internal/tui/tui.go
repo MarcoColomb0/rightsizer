@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/appliance"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
@@ -104,6 +105,9 @@ type Options struct {
 	// Appliance upgrades are performed by the host after a request; the
 	// console does not exit.
 	Appliance bool
+	// Notes returns the release notes of every version newer than the
+	// running one, shown on the update prompt.
+	Notes func() ([]appliance.Note, error)
 }
 
 type Model struct {
@@ -143,6 +147,9 @@ type Model struct {
 	pwFocus  int
 
 	asked, upgrade bool
+	notes          []appliance.Note
+	notesErr       string
+	notesOff       int
 	bgKnown        bool
 
 	ex     excludeForm
@@ -263,7 +270,7 @@ func (m Model) updateAvailable() bool {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, m.fetch(), m.spin.Tick, tick())
+	return tea.Batch(tea.RequestBackgroundColor, m.fetch(), m.spin.Tick, tick(), m.fetchNotes())
 }
 
 func tick() tea.Cmd {
@@ -378,6 +385,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sz = msg.sz
 		}
 		m.syncViewport()
+		return m, nil
+	case notesMsg:
+		if msg.err != nil {
+			m.notesErr = msg.err.Error()
+		} else {
+			m.notes = msg.notes
+			if m.notes == nil {
+				m.notes = []appliance.Note{}
+			}
+		}
 		return m, nil
 	case sizingParamsMsg:
 		return m.sizingParams(msg)
@@ -975,6 +992,14 @@ func (m Model) keyUpdate(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "n", "N", "esc":
 		m.scr = scrHome
+	case "up", "k":
+		m.scrollNotes(-1)
+	case "down", "j":
+		m.scrollNotes(1)
+	case "pgup":
+		m.scrollNotes(-10)
+	case "pgdown", "space":
+		m.scrollNotes(10)
 	}
 	return m, nil
 }

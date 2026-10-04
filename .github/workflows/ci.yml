@@ -35,7 +35,10 @@ jobs:
           shellcheck install.sh
           awk "/^cat >\"\\\$\{BIN\}.new\" <<'WRAPPER'/{f=1;next} /^WRAPPER\$/{f=0} f" install.sh > launcher.sh
           test -s launcher.sh
-          shellcheck launcher.sh
+          shellcheck launcher.sh .github/release-notes.sh
+      - name: release notes in CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: sh .github/release-notes.sh "$GITHUB_REF_NAME" >/dev/null
       - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
@@ -195,6 +198,8 @@ jobs:
       - uses: actions/attest-build-provenance@v4
         with:
           subject-path: install.sh
-      - run: gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --generate-notes --title "rightsizer $GITHUB_REF_NAME"
+      - run: sh .github/release-notes.sh "$GITHUB_REF_NAME" > release-notes.md
+      # The notes come from CHANGELOG.md; GitHub appends the compare link.
+      - run: gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --notes-file release-notes.md --generate-notes --title "rightsizer $GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ github.token }}
