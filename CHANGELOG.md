@@ -4,6 +4,8 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ## Unreleased
 
+## v1.2.0 - 2026-10-11
+
 ### Added
 
 - Collect for longer: `+` on a vCenter adds 1 to 14 days to an analysis, up to 30 days in total. A finished analysis reopens and keeps everything collected so far.
