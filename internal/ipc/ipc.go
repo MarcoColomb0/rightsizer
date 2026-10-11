@@ -28,6 +28,9 @@ type Backend interface {
 	Probe(host string) (*vc.CertInfo, error)
 	Add(cfg engine.Config, password string) (string, error)
 	Resume(id, password string) error
+	// Extend keeps an analysis collecting for more days; a finished one
+	// reopens, with an empty password using the stored credentials.
+	Extend(id string, days int, password string) error
 	Finish(id string) error
 	Remove(id string) error
 	Publish(id string) (*report.Share, error)
@@ -92,6 +95,12 @@ func (l Local) Add(cfg engine.Config, password string) (string, error) {
 	return l.E.Add(ctx, cfg, password)
 }
 
+func (l Local) Extend(id string, days int, password string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	return l.E.Extend(ctx, id, time.Duration(days)*24*time.Hour, password)
+}
+
 func (l Local) Resume(id, password string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -121,6 +130,11 @@ func (l Local) ChangePassword(old, next string) error    { return l.E.ChangePass
 
 type addRequest struct {
 	Config   engine.Config
+	Password string
+}
+
+type extendRequest struct {
+	Days     int
 	Password string
 }
 
@@ -173,6 +187,12 @@ func Serve(ctx context.Context, sock string, b Local) error {
 		var req idRequest
 		if decode(w, r, &req) {
 			reply(w, nil, b.Resume(r.PathValue("id"), req.Password))
+		}
+	})
+	mux.HandleFunc("POST /sources/{id}/extend", func(w http.ResponseWriter, r *http.Request) {
+		var req extendRequest
+		if decode(w, r, &req) {
+			reply(w, nil, b.Extend(r.PathValue("id"), req.Days, req.Password))
 		}
 	})
 	mux.HandleFunc("POST /sources/{id}/finish", func(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +345,10 @@ func (c *Client) Add(cfg engine.Config, password string) (string, error) {
 
 func (c *Client) Resume(id, password string) error {
 	return c.call("POST", "/sources/"+id+"/resume", idRequest{Password: password}, nil)
+}
+
+func (c *Client) Extend(id string, days int, password string) error {
+	return c.call("POST", "/sources/"+id+"/extend", extendRequest{Days: days, Password: password}, nil)
 }
 
 func (c *Client) Finish(id string) error { return c.call("POST", "/sources/"+id+"/finish", nil, nil) }

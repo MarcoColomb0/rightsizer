@@ -38,6 +38,7 @@ const (
 	scrExclude
 	scrExclusions
 	scrSizing
+	scrExtend
 )
 
 // ExitUpgrade tells the host launcher that the user asked to upgrade.
@@ -146,6 +147,7 @@ type Model struct {
 	pw       [3]textinput.Model
 	pwFocus  int
 
+	ext            extendForm
 	asked, upgrade bool
 	// choice is the highlighted button of a two-button prompt.
 	choice   int
@@ -425,7 +427,7 @@ func (m Model) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx := m.inputIdx(); idx >= 0 {
 			m.in[idx], cmd = m.in[idx].Update(msg)
 		}
-	case scrResume:
+	case scrResume, scrExtend:
 		m.pass, cmd = m.pass.Update(msg)
 	case scrSettings:
 		m.pw[m.pwFocus], cmd = m.pw[m.pwFocus].Update(msg)
@@ -492,6 +494,8 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.keyExclusions(msg)
 	case scrSizing:
 		return m.keySizing(msg)
+	case scrExtend:
+		return m.keyExtend(msg)
 	case scrLoading:
 		if msg.String() == "q" {
 			return m, tea.Quit
@@ -570,6 +574,8 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 			m.scr = scrExclude
 		case "sizing-params":
 			m.scr = scrSizing
+		case "extend":
+			m.scr = scrExtend
 		default:
 			m.scr = m.back
 		}
@@ -586,6 +592,9 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.scr = scrSource
 	case "remove":
 		m.cur, m.src, m.scr = "", nil, scrHome
+	case "extend":
+		m.pass.SetValue("")
+		m.scr, m.note = scrSource, "Analysis extended. Collection continues until the new end, and everything collected so far is kept."
 	case "password":
 		for i := range m.pw {
 			m.pw[i].SetValue("")
@@ -933,6 +942,8 @@ func (m Model) keySource(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.updateAvailable() {
 			m.showUpdate()
 		}
+	case "+":
+		return m.openExtend()
 	case "e":
 		if m.tab == tabFindings {
 			return m.openExclude()

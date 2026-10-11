@@ -84,6 +84,7 @@ func screens(t *testing.T, w, h int, dark bool) map[string]string {
 	snap("sizing", sz)
 	snap("sizing-options", send(t, sz, typ("o")))
 	snap("finish", send(t, m, typ("f")))
+	snap("extend", send(t, m, typ("+")))
 	snap("exclude", send(t, m, typ("2"), typ("e")))
 	home := send(t, m, esc)
 	snap("exclusions", send(t, home, typ("x")))

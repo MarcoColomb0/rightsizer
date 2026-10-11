@@ -33,6 +33,9 @@ const (
 	maxSources   = 32
 	MinDuration  = 24 * time.Hour
 	MaxDuration  = 14 * 24 * time.Hour
+	// MaxTotal is the longest an analysis can run, extensions included:
+	// peak-aware sizing keeps half-hour demand slots for 32 days.
+	MaxTotal = 30 * 24 * time.Hour
 )
 
 var (
@@ -326,28 +329,69 @@ func (e *Engine) Resume(ctx context.Context, id, password string) error {
 	if s.phase() != NeedPassword {
 		return errors.New("source is not paused")
 	}
+	cl, err := e.reconnect(ctx, s, password)
+	if err != nil {
+		return err
+	}
+	s.resume(cl)
+	return nil
+}
+
+// Extend keeps an analysis collecting for longer, keeping everything it
+// has gathered. A running or paused analysis moves its end; a finished one
+// reopens and collects again from now, which needs a vCenter connection:
+// an empty password uses the vault.
+func (e *Engine) Extend(ctx context.Context, id string, extra time.Duration, password string) error {
+	s, err := e.get(id)
+	if err != nil {
+		return err
+	}
+	if extra < MinDuration || extra > MaxDuration {
+		return fmt.Errorf("extend by %s to %s", MinDuration, MaxDuration)
+	}
+	if s.phase() != Done {
+		return s.extend(extra)
+	}
+	if err := s.fits(time.Now().Add(extra)); err != nil {
+		return err
+	}
+	cl, err := e.reconnect(ctx, s, password)
+	if err != nil {
+		return err
+	}
+	if err := s.reopen(cl, extra); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cl.Close(ctx)
+		cancel()
+		return err
+	}
+	return nil
+}
+
+// reconnect logs in to a source's vCenter with password, or the stored one
+// when it is empty, and keeps a typed password for next time.
+func (e *Engine) reconnect(ctx context.Context, s *Source, password string) (*vc.Client, error) {
 	stored := password == ""
 	if stored {
 		if e.vault == nil {
-			return errors.New("password required")
+			return nil, errors.New("password required")
 		}
-		sec, err := e.vault.Get(id)
+		sec, err := e.vault.Get(s.id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		password = sec.Password
 	}
 	cl, err := s.connect(ctx, password)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !stored && e.vault != nil && !e.vault.Locked() {
-		if err := e.vault.Put(id, vault.Secret{User: s.status(false).Config.User, Password: password}); err != nil {
-			slog.Warn("could not store updated credentials", "source", id, "err", err)
+		if err := e.vault.Put(s.id, vault.Secret{User: s.status(false).Config.User, Password: password}); err != nil {
+			slog.Warn("could not store updated credentials", "source", s.id, "err", err)
 		}
 	}
-	s.resume(cl)
-	return nil
+	return cl, nil
 }
 
 // Unlock opens the vault and resumes every paused source in the background.

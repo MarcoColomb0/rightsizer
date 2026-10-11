@@ -4,6 +4,10 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ## Unreleased
 
+### Added
+
+- Collect for longer: `+` on a vCenter adds 1 to 14 days to an analysis, up to 30 days in total. A finished analysis reopens and keeps everything collected so far.
+
 ### Fixed
 
 - Long text in PDF tables, such as disk paths and suggestions, wraps inside its cell instead of being cut off.

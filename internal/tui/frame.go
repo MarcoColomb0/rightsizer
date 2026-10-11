@@ -133,6 +133,8 @@ func (m Model) body() (string, []zone) {
 		return m.viewExclusions(), nil
 	case scrSizing:
 		return m.viewSizingOpts()
+	case scrExtend:
+		return m.viewExtend()
 	}
 	return "", nil
 }
@@ -319,6 +321,8 @@ func (m Model) click(id string) (tea.Model, tea.Cmd) {
 		case scrSettings:
 			m.pwFocus = len(m.pw) - 1
 			m.focusPw()
+		case scrExtend:
+			m.extFocus(xSave)
 		default:
 		}
 		return m.key(press("enter"))
@@ -478,7 +482,7 @@ func (m Model) keyMap() keyMap {
 			short: []key.Binding{bind("↑/↓", "select"), bind("enter", "open"), bind("a", "add vCenter"), bind("p", "PDF"), bind("x", "exclusions"), more, bind("q", "quit")},
 			full:  [][]key.Binding{nav, act, append(sys, more)},
 		}
-	case scrSetup, scrExclude, scrSizing:
+	case scrSetup, scrExclude, scrSizing, scrExtend:
 		return keyMap{short: []key.Binding{bind("↑/↓", "move"), bind("←/→", "change"), bind("enter", "next/save"), bind("esc", "cancel")}}
 	case scrCert:
 		return keyMap{short: []key.Binding{bind("←/→", "choose"), bind("enter", "select"), bind("y", "trust and start"), bind("n", "back")}}
@@ -543,7 +547,7 @@ func (m Model) sourceKeys(more key.Binding) keyMap {
 		case engine.Done:
 		}
 	}
-	act = append(act, bind("x", "remove"))
+	act = append(act, bind("+", "collect for longer"), bind("x", "remove"))
 	if m.updateAvailable() {
 		act = append(act, bind("u", "upgrade"))
 	}

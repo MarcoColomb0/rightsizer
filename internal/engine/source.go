@@ -100,6 +100,57 @@ func (s *Source) resume(cl *vc.Client) {
 	s.run()
 }
 
+// fits reports whether the analysis may run until ends.
+func (s *Source) fits(ends time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ends.Sub(s.st.Started) > MaxTotal {
+		return fmt.Errorf("an analysis can run for at most %d days in total", int(MaxTotal.Hours()/24))
+	}
+	return nil
+}
+
+// extend moves the end of a running or paused analysis.
+func (s *Source) extend(extra time.Duration) error {
+	s.mu.Lock()
+	ends := s.st.Ends.Add(extra)
+	s.mu.Unlock()
+	if err := s.fits(ends); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.Phase == Done {
+		return errors.New("the analysis has just finished; extend it again to reopen it")
+	}
+	s.st.Ends = s.st.Ends.Add(extra)
+	s.st.Config.Duration = s.st.Ends.Sub(s.st.Started)
+	return s.save()
+}
+
+// reopen restarts collection on a finished analysis until extra from now.
+// Every sample collected so far is kept; the time since it finished is
+// not collected.
+func (s *Source) reopen(cl *vc.Client, extra time.Duration) error {
+	now := time.Now()
+	s.mu.Lock()
+	if s.st.Phase != Done {
+		s.mu.Unlock()
+		return errors.New("the analysis is not finished")
+	}
+	s.st.Phase = Running
+	s.st.Ends = now.Add(extra)
+	s.st.Config.Duration = s.st.Ends.Sub(s.st.Started)
+	s.st.Finished = time.Time{}
+	s.client = cl
+	s.lastErr, s.authFails = "", 0
+	err := s.save()
+	s.mu.Unlock()
+	s.refreshResult()
+	s.run()
+	return err
+}
+
 func (s *Source) phase() Phase {
 	s.mu.Lock()
 	defer s.mu.Unlock()

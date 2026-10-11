@@ -254,6 +254,42 @@ func (b *Backend) Resume(id, password string) error {
 	return nil
 }
 
+func (b *Backend) Extend(id string, days int, password string) error {
+	extra := time.Duration(days) * 24 * time.Hour
+	if extra < engine.MinDuration || extra > engine.MaxDuration {
+		return fmt.Errorf("extend by %s to %s", engine.MinDuration, engine.MaxDuration)
+	}
+	b.mu.Lock()
+	s, err := b.find(id)
+	if err != nil {
+		b.mu.Unlock()
+		return err
+	}
+	done := s.st.Phase == engine.Done
+	ends := s.st.Ends.Add(extra)
+	if done {
+		ends = time.Now().Add(extra)
+	}
+	b.mu.Unlock()
+	if ends.Sub(s.st.Started) > engine.MaxTotal {
+		return fmt.Errorf("an analysis can run for at most %d days in total", int(engine.MaxTotal.Hours()/24))
+	}
+	if done {
+		b.wait()
+		if password == "wrong" {
+			return errors.New("login failed: Cannot complete login due to an incorrect user name or password")
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s.st.Ends, s.st.Config.Duration = ends, ends.Sub(s.st.Started)
+	if done {
+		s.st.Phase, s.st.Finished = engine.Running, time.Time{}
+		b.analyze(s)
+	}
+	return nil
+}
+
 func (b *Backend) Finish(id string) error {
 	b.wait()
 	b.mu.Lock()

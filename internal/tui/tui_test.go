@@ -33,6 +33,7 @@ type fake struct {
 	params   analysis.SizingParams
 	sized    []string
 	stopped  []string
+	extended string
 }
 
 func (f *fake) Sizing(string) (*analysis.Sizing, error) {
@@ -65,6 +66,10 @@ func (f *fake) Remove(string) error                   { return nil }
 func (f *fake) Publish(string) (*report.Share, error) { return &report.Share{}, nil }
 func (f *fake) StopShare(id string) error             { f.stopped = append(f.stopped, id); return nil }
 func (f *fake) Resume(id, pw string) error            { f.resumed = id + ":" + pw; return nil }
+func (f *fake) Extend(id string, days int, pw string) error {
+	f.extended = fmt.Sprintf("%s:%d:%s", id, days, pw)
+	return nil
+}
 func (f *fake) Add(c engine.Config, _ string) (string, error) {
 	f.added = c
 	return "abcd1234", nil
@@ -699,5 +704,45 @@ func TestTwoButtonPrompts(t *testing.T) {
 	m = send(t, m, enter)
 	if m.scr != scrSetup || f.added.Host != "" {
 		t.Fatal("the certificate screen opens on Back, so enter alone must not trust")
+	}
+}
+
+func TestExtendAnalysis(t *testing.T) {
+	f := fakeDemo()
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), enter)
+	m = send(t, m, m.fetch()(), typ("+"))
+	if m.scr != scrExtend {
+		t.Fatalf("+ must open the extension form, got %v (%s)", m.scr, m.err)
+	}
+	view(t, m, "Collect for longer", "Everything collected so far is kept", "7 days", "New end", "in total")
+	if strings.Contains(view(t, m), "vCenter password") {
+		t.Fatal("a running analysis needs no password to extend")
+	}
+	m = send(t, m, right, enter, enter)
+	if f.extended != "aaaa0001:14:" || m.scr != scrSource {
+		t.Fatalf("enter must extend by the chosen days, got %q on %v", f.extended, m.scr)
+	}
+	view(t, m, "Analysis extended")
+
+	f.src.Phase, f.src.Finished = engine.Done, time.Now().Add(-2*time.Hour)
+	f.sum.Vault.Enabled = false
+	m = send(t, m, m.fetch()(), typ("+"))
+	view(t, m, "reopens and collects again", "is not collected", "vCenter password")
+	m = send(t, m, enter, enter)
+	if !strings.Contains(m.err, "password") || f.extended != "aaaa0001:14:" {
+		t.Fatalf("reopening without stored credentials needs the password: %q", m.err)
+	}
+	m = send(t, m, typ("secret"), enter)
+	if f.extended != "aaaa0001:7:secret" {
+		t.Fatalf("got %q", f.extended)
+	}
+
+	f.src.Phase = engine.Running
+	f.src.Started = time.Now().Add(-29*24*time.Hour - 20*time.Hour)
+	f.src.Ends = time.Now().Add(2 * time.Hour)
+	m = send(t, m, m.fetch()(), typ("+"))
+	if m.scr == scrExtend || !strings.Contains(m.err, "30 days") {
+		t.Fatalf("an analysis at its 30-day limit cannot be extended: %v %q", m.scr, m.err)
 	}
 }

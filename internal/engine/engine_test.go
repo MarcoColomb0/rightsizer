@@ -490,3 +490,82 @@ func TestSizing(t *testing.T) {
 	}
 	e2.Shutdown()
 }
+
+func TestExtend(t *testing.T) {
+	a := newSim(t)
+	defer a.close()
+	dir := t.TempDir()
+	web := &report.Server{Listen: "127.0.0.1:0", PublicHost: "127.0.0.1", TTL: time.Hour}
+	v := vault.Open(dir)
+	if err := v.Reset("appliance admin password"); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(dir, web, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Shutdown()
+	ctx := context.Background()
+	id, err := e.Add(ctx, a.cfg(), a.pass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitPolls(t, e, id, 2)
+
+	before, _ := e.Source(id)
+	if err := e.Extend(ctx, id, time.Hour, ""); err == nil {
+		t.Fatal("extensions shorter than a day must be rejected")
+	}
+	if err := e.Extend(ctx, id, 3*24*time.Hour, ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := e.Source(id)
+	if st.Phase != Running || !st.Ends.Equal(before.Ends.Add(3*24*time.Hour)) || st.Config.Duration != 4*24*time.Hour {
+		t.Fatalf("a running analysis must keep running with a later end: %+v", st)
+	}
+	for _, extra := range []time.Duration{14 * 24 * time.Hour, 12 * 24 * time.Hour} {
+		if err := e.Extend(ctx, id, extra, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.Extend(ctx, id, 24*time.Hour, ""); err == nil || !strings.Contains(err.Error(), "30 days") {
+		t.Fatalf("an analysis must stay within 30 days: %v", err)
+	}
+
+	if err := e.Finish(id); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := e.Source(id)
+	if done.Phase != Done {
+		t.Fatal("not finished")
+	}
+	s := e.mustSource(t, id)
+	started := func(ago time.Duration) {
+		s.mu.Lock()
+		s.st.Started = time.Now().Add(-ago)
+		s.mu.Unlock()
+	}
+	started(29*24*time.Hour + 12*time.Hour)
+	if err := e.Extend(ctx, id, 24*time.Hour, ""); err == nil {
+		t.Fatal("reopening may not go past 30 days from the start either")
+	}
+	started(24 * time.Hour)
+
+	if err := e.Extend(ctx, id, 2*24*time.Hour, ""); err != nil {
+		t.Fatalf("reopening uses the stored credentials: %v", err)
+	}
+	st, _ = e.Source(id)
+	if st.Phase != Running || !st.Finished.IsZero() || time.Until(st.Ends) < 47*time.Hour {
+		t.Fatalf("a finished analysis must collect again: %+v", st)
+	}
+	waitPolls(t, e, id, done.Polls+2)
+}
+
+func (e *Engine) mustSource(t *testing.T, id string) *Source {
+	t.Helper()
+	s, err := e.get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}

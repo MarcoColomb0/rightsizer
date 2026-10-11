@@ -30,6 +30,7 @@ First results appear within minutes: rightsizer imports the last 14 days of hist
 | `p` | PDF report; on the sizing tab, the sizing PDF and its CSV data |
 | `f` | finish the analysis early |
 | `r` | resume a paused analysis |
+| `+` | collect for longer: add 1 to 14 days, up to 30 in total; a finished analysis reopens, keeping everything collected so far |
 | `x` | remove the vCenter with its data |
 
 | Findings tab | |
