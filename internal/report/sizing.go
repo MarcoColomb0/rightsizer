@@ -160,8 +160,8 @@ func (s *sizingDoc) compute() {
 			fmt.Sprintf("%s / %s", ghzOf(c.DemandMHz), ghzOf(c.PeakMHz)), tb(int64(c.ConsumedB)),
 		})
 	}
-	s.table([]col{{"Cluster", 28, "L"}, {"Hosts", 11, "R"}, {"Cores (thr.)", 19, "R"}, {"RAM", 16, "R"}, {"VMs on/off", 16, "R"},
-		{"vCPU", 12, "R"}, {"vRAM", 17, "R"}, {"vCPU:core", 15, "R"}, {"CPU p/peak", 24, "R"}, {"Mem used", 16, "R"}}, rows)
+	s.table([]col{{"Cluster", 24, "L"}, {"Hosts", 10, "R"}, {"Cores (thr.)", 18, "R"}, {"RAM", 15, "R"}, {"VMs on/off", 16, "R"},
+		{"vCPU", 11, "R"}, {"vRAM", 16, "R"}, {"vCPU:core", 15, "R"}, {"CPU p/peak", 31, "R"}, {"Mem used", 16, "R"}}, rows)
 	s.note(fmt.Sprintf("vCPU and vRAM: powered-on VMs as configured. CPU: demand of all hosts at p%.0f and peak. Mem used: memory the hosts back for VMs (consumed) at p%.0f.", sz.Percentile, sz.Percentile))
 
 	s.h2("Needed")
@@ -505,7 +505,7 @@ func (s *sizingDoc) current() {
 		rows = append(rows, []string{h.Cluster, h.Name + state, dashS(strings.TrimSpace(shortVendor(h.Vendor) + " " + h.Model)), dashS(h.Serial), shortCPU(h.CPUModel),
 			fmt.Sprintf("%d × %d", h.Sockets, h.Cores/max(h.Sockets, 1)), tb(h.MemBytes), esxi(h.ESXi), dashS(bios)})
 	}
-	s.table([]col{{"Cluster", 16, "L"}, {"Host", 28, "L"}, {"Model", 30, "L"}, {"Serial", 18, "L"}, {"CPU", 44, "L"}, {"Sockets", 12, "R"}, {"RAM", 12, "R"}, {"ESXi", 10, "L"}, {"BIOS", 12, "L"}}, rows)
+	s.table([]col{{"Cluster", 16, "L"}, {"Host", 26, "L"}, {"Model", 31, "L"}, {"Serial", 14, "L"}, {"CPU", 45, "L"}, {"Sockets", 11, "R"}, {"RAM", 12, "R"}, {"ESXi", 11, "L"}, {"BIOS", 13, "L"}}, rows)
 	s.note("BIOS: release date of the installed firmware. Full versions, ESXi builds and every adapter are in the data download.")
 
 	s.h2("Adapters")

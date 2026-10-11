@@ -354,12 +354,42 @@ func (d *doc) tableWith(cols []col, rows [][]string, o tableOpts) {
 		d.AddPage()
 	}
 	head()
+	// Cells wrap to their column and the row grows to its tallest cell, so
+	// long names, paths and suggestions are never cut.
+	const lineH = 3.6
+	pad := (rowH - lineH) / 2
+	cells := make([][]string, len(cols))
 	for i, row := range rows {
-		if d.GetY()+rowH > 279 {
+		hl := o.hl != nil && o.hl(i)
+		if hl {
+			d.font("B", 7.5)
+		} else {
+			d.font("", 7.5)
+		}
+		n := 1
+		for j, c := range cols {
+			s := ""
+			if j < len(row) {
+				s = row[j]
+			}
+			cells[j] = nil
+			if j == o.pill || s == "" {
+				cells[j] = []string{s}
+				continue
+			}
+			cells[j] = d.SplitText(d.tr(s), c.w*k)
+			n = max(n, len(cells[j]))
+		}
+		h := float64(n)*lineH + 2*pad
+		if d.GetY()+h > 279 {
 			d.AddPage()
 			head()
+			if hl {
+				d.font("B", 7.5)
+			} else {
+				d.font("", 7.5)
+			}
 		}
-		hl := o.hl != nil && o.hl(i)
 		switch {
 		case hl:
 			d.fill(cTint)
@@ -369,53 +399,41 @@ func (d *doc) tableWith(cols []col, rows [][]string, o tableOpts) {
 			d.fill(cWhite)
 		}
 		y := d.GetY()
-		d.Rect(margin, y, content, rowH, "F")
+		d.Rect(margin, y, content, h, "F")
 		if hl {
 			d.fill(cAccent)
-			d.RoundedRect(margin-2, y+0.6, 0.9, rowH-1.2, 0.45, "1234", "F")
+			d.RoundedRect(margin-2, y+0.6, 0.9, h-1.2, 0.45, "1234", "F")
 		}
 		x := margin
 		for j, c := range cols {
-			s := ""
-			if j < len(row) {
-				s = row[j]
-			}
 			w := c.w * k
-			d.SetXY(x, y)
-			if j == o.pill && s != "" {
-				bg, fg := sevPill(s)
-				d.pill(x+1, y+1, s, bg, fg, 6.2)
-			} else {
-				d.font("", 7.5)
-				d.color(cInk)
+			if j == o.pill && cells[j][0] != "" {
+				bg, fg := sevPill(cells[j][0])
+				d.pill(x+1, y+1, cells[j][0], bg, fg, 6.2)
 				if hl {
 					d.font("B", 7.5)
-					if j == 0 {
-						d.color(cAccent)
-					}
+				} else {
+					d.font("", 7.5)
 				}
-				d.CellFormat(w, rowH, d.fit(s, w-1.5), "", 0, c.align, false, 0, "")
+				x += w
+				continue
+			}
+			d.color(cInk)
+			if hl && j == 0 {
+				d.color(cAccent)
+			}
+			for li, line := range cells[j] {
+				d.SetXY(x, y+pad+float64(li)*lineH)
+				d.CellFormat(w, lineH, line, "", 0, c.align, false, 0, "")
 			}
 			x += w
 		}
-		d.SetXY(margin, y+rowH)
+		d.SetXY(margin, y+h)
 	}
 	d.draw(cRule)
 	d.SetLineWidth(0.25)
 	d.Line(margin, d.GetY(), pageW-margin, d.GetY())
 	d.Ln(3)
-}
-
-func (d *doc) fit(s string, w float64) string {
-	s = d.tr(s)
-	if d.GetStringWidth(s) <= w {
-		return s
-	}
-	r := []rune(s)
-	for len(r) > 1 && d.GetStringWidth(string(r)+"…") > w {
-		r = r[:len(r)-1]
-	}
-	return string(r) + "…"
 }
 
 // legend draws a colour swatch and its label, returning the next x.

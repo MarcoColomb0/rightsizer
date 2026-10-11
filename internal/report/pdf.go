@@ -544,7 +544,7 @@ func (d *doc) findings() {
 	for _, f := range d.r.Findings {
 		rows = append(rows, []string{f.Severity.String(), f.VM, string(f.Kind), f.Current, f.Suggested, f.Confidence})
 	}
-	d.tableWith([]col{{"Priority", 15, "L"}, {"VM", 39, "L"}, {"Finding", 32, "L"}, {"Current", 36, "L"}, {"Suggested", 42, "L"}, {"Conf.", 16, "L"}}, rows, tableOpts{pill: 0})
+	d.tableWith([]col{{"Priority", 15, "L"}, {"VM", 38, "L"}, {"Finding", 30, "L"}, {"Current", 45, "L"}, {"Suggested", 40, "L"}, {"Conf.", 12, "L"}}, rows, tableOpts{pill: 0})
 
 	d.h2("Details by VM")
 	byVM := map[string][]analysis.Finding{}
