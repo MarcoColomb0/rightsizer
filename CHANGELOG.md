@@ -12,6 +12,7 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ### Fixed
 
+- Built with Go 1.27.2, which fixes denial-of-service vulnerabilities in Go's HTTP server.
 - Long text in PDF tables, such as disk paths and suggestions, wraps inside its cell instead of being cut off.
 - Release notes list only the changes from the changelog, without the automatically generated list of merged pull requests.
 
