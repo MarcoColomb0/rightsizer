@@ -2,7 +2,7 @@ module github.com/MarcoColomb0/rightsizer
 
 go 1.26.8
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	charm.land/bubbles/v2 v2.2.1
