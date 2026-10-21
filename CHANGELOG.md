@@ -2,7 +2,10 @@
 
 Notable changes to rightsizer. Each section becomes the notes of its GitHub release and is shown in the console's update prompt. Add new entries under **Unreleased**; when tagging, rename it to the version and date. Earlier releases are listed on the [releases page](https://github.com/MarcoColomb0/rightsizer/releases).
 
-## Unreleased
+## v1.2.1 - 2026-10-21
+
+### Fixed
+- Built with Go 1.27.3, which fixes [CVE-2026-111943](https://nvd.nist.gov/vuln/detail/CVE-2026-111943) (
 
 ## v1.2.0 - 2026-10-11
 
