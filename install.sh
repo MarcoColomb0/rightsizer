@@ -81,7 +81,8 @@ if [ "$TAG" = "latest" ]; then
 		BUILD=1
 	fi
 fi
-[[ "$TAG" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|main)$ ]] || die "invalid tag: $TAG"
+# Pre-releases (v1.4.0-rc.1) are installed only when named with --tag.
+[[ "$TAG" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta|alpha)\.?[0-9]*)?|main)$ ]] || die "invalid tag: $TAG"
 
 bold "Installing rightsizer ${TAG}"
 
@@ -223,7 +224,7 @@ update_launcher() {
 
 upgrade() {
 	local tag="$1" old_image old_id old_ver old_count new_image file="" new_count
-	[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid release: $tag"
+	[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta|alpha)\.?[0-9]*)?$ ]] || die "invalid release: $tag"
 	docker inspect "$C" >/dev/null 2>&1 || die "rightsizer container not found, re-run the installer"
 	old_image="$(docker inspect -f '{{.Config.Image}}' "$C")"
 	old_id="$(docker inspect -f '{{.Image}}' "$C")"

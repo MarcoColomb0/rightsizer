@@ -1,16 +1,19 @@
 package version
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 // Newer reports whether latest is a higher semantic version than current.
-// Development builds and malformed versions never trigger an update.
+// Development builds and malformed versions never trigger an update, and a
+// pre-release is never offered; a pre-release installed is older than its
+// final release.
 func Newer(latest, current string) bool {
-	l, ok1 := parse(latest)
-	c, ok2 := parse(current)
-	if !ok1 || !ok2 {
+	l, lpre, ok1 := parse(latest)
+	c, cpre, ok2 := parse(current)
+	if !ok1 || !ok2 || lpre {
 		return false
 	}
 	for i := range l {
@@ -18,10 +21,29 @@ func Newer(latest, current string) bool {
 			return l[i] > c[i]
 		}
 	}
-	return false
+	return cpre
 }
 
-func parse(v string) ([3]int, bool) {
+// IsPre reports a pre-release version such as v1.4.0-rc.1.
+func IsPre(v string) bool {
+	_, pre, ok := parse(v)
+	return ok && pre
+}
+
+// preSuffix is a release candidate, beta or alpha such as -rc.1; other
+// suffixes, like git describe's -12-gabcdef, are development builds.
+var preSuffix = regexp.MustCompile(`^(rc|beta|alpha)\.?[0-9]*$`)
+
+func parse(v string) ([3]int, bool, bool) {
+	core, suffix, pre := strings.Cut(strings.TrimSpace(v), "-")
+	if pre && !preSuffix.MatchString(suffix) {
+		return [3]int{}, false, false
+	}
+	out, ok := parseCore(core)
+	return out, pre, ok
+}
+
+func parseCore(v string) ([3]int, bool) {
 	var out [3]int
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
 	if i := strings.IndexAny(v, "-+"); i >= 0 {

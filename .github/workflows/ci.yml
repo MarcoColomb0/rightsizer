@@ -80,7 +80,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
             type=edge,branch=main
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
@@ -211,6 +211,11 @@ jobs:
           if [ -n "$prev" ] && [ "$prev" != "$GITHUB_REF_NAME" ]; then
             printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME" >> release-notes.md
           fi
-          gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --notes-file release-notes.md --title "rightsizer $GITHUB_REF_NAME"
+          # A tag such as v1.4.0-rc.1 is a pre-release: never the latest, so
+          # installs, upgrades and update prompts keep the last full release.
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease --latest=false" ;; esac
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --notes-file release-notes.md --title "rightsizer $GITHUB_REF_NAME" $pre
         env:
           GH_TOKEN: ${{ github.token }}
