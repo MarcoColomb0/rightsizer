@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"regexp"
 	"slices"
@@ -28,6 +29,18 @@ type Bundle struct {
 	Anonymise bool
 	// Secrets are left out whatever happens, such as passwords.
 	Secrets []string
+	known   [][2]string
+}
+
+// Identify names values that identify the customer but appear in no ONTAP
+// record, such as the addresses and users of the sources, so anonymising
+// replaces them too. kind is host, ip or user.
+func (b *Bundle) Identify(kind string, values ...string) {
+	for _, v := range values {
+		if v = strings.TrimSpace(v); len(v) >= 2 {
+			b.known = append(b.known, [2]string{kind, v})
+		}
+	}
 }
 
 func New() *Bundle { return &Bundle{files: map[string][]byte{}} }
@@ -78,6 +91,9 @@ func (b *Bundle) WriteZip(w io.Writer) error {
 		a = newAnonymiser()
 		for _, n := range b.names {
 			a.collect(n, b.files[n])
+		}
+		for _, k := range b.known {
+			a.identify(k[0], k[1])
 		}
 	}
 	z := zip.NewWriter(w)
@@ -190,6 +206,29 @@ func (a *anonymiser) walk(keys map[string]string, key string, v any) {
 			}
 		default:
 			a.token(kind, x)
+		}
+	}
+}
+
+// identify tokenises a configured address or user: a host with a port
+// keeps the port readable, and a host's first label is tokenised on its
+// own, as logs and certificates often show it.
+func (a *anonymiser) identify(kind, v string) {
+	if h, port, err := net.SplitHostPort(v); err == nil && port != "" {
+		v = h
+	}
+	if net.ParseIP(v) != nil {
+		kind = "ip"
+	}
+	a.token(kind, v)
+	if kind == "host" {
+		if first, _, ok := strings.Cut(v, "."); ok && len(first) >= 3 {
+			a.token("host", first)
+		}
+	}
+	if kind == "user" {
+		if name, _, ok := strings.Cut(v, "@"); ok && len(name) >= 3 {
+			a.token("user", name)
 		}
 	}
 }

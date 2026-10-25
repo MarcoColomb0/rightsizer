@@ -145,7 +145,7 @@ func (s *Source) pollArray(ctx context.Context) error {
 // a datastore of a vCenter added afterwards.
 func (s *Source) importArrayHistory(ctx context.Context, cl *ontap.Client, hist *analysis.ArrayStore, objs []arrayObject) {
 	s.mu.Lock()
-	state := s.st.HistoryState
+	state, tried := s.st.HistoryState, s.st.HistorySync
 	var todo []arrayObject
 	for _, o := range objs {
 		if hist.LastOf(o.kind, o.id).IsZero() {
@@ -153,47 +153,56 @@ func (s *Source) importArrayHistory(ctx context.Context, cl *ontap.Client, hist 
 		}
 	}
 	s.mu.Unlock()
-	if len(todo) == 0 || state == "unavailable" {
+	// An unavailable archive is tried again every hour, not on every poll.
+	if len(todo) == 0 || state == "unavailable" && time.Since(tried) < historyEvery {
 		return
 	}
 	now := time.Now()
 	plan := ontap.HistoryPlan(now, historyBack)
-	if state == "" {
+	fresh := state == "" || state == "unavailable"
+	if fresh {
 		s.setHistory("loading")
 	}
 	for i, o := range todo {
-		if state == "" {
+		if fresh {
 			s.setHistory(fmt.Sprintf("loading %d%%", i*100/len(todo)))
 		}
 		var got []func()
-		failed := false
+		var failure error
 		// Oldest window first: samples older than the last one seen are
 		// ignored.
 		for _, w := range slices.Backward(plan) {
 			ss, err := cl.Metrics(ctx, o.kind, o.uuid, w.Interval)
 			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				slog.Warn("ONTAP history import failed", "source", s.id, "object", o.id, "interval", w.Interval, "err", err)
-				failed = true
+				failure = err
 				break
 			}
 			slog.Debug("ONTAP archive", "source", s.id, "object", o.id, "interval", w.Interval, "samples", len(ss))
 			got = append(got, func() { hist.Add(o.kind, o.id, ss, w.Start, w.End) })
 		}
-		if failed && o.kind == ontap.ClusterObject {
-			s.setHistory("unavailable")
+		switch {
+		case failure == nil:
+		case ctx.Err() != nil || ontap.IsAuthError(failure):
+			// Not the archive's fault: the next poll tries again.
+			s.restoreHistory(state)
 			return
+		case o.kind == ontap.ClusterObject:
+			slog.Warn("ONTAP archive unavailable, trying again in an hour", "source", s.id, "err", failure)
+			s.mu.Lock()
+			s.st.HistoryState, s.st.HistorySync = "unavailable", now
+			_ = s.save()
+			s.mu.Unlock()
+			return
+		default:
+			slog.Warn("ONTAP history import failed", "source", s.id, "object", o.id, "err", failure)
 		}
 		s.mu.Lock()
 		for _, add := range got {
 			add()
 		}
-		if failed {
-			// A missing archive is not retried on every poll.
-			hist.Mark(o.kind, o.id, now)
-		}
+		// Read, even when the archive was empty or missing: it is not read
+		// again on every poll.
+		hist.Mark(o.kind, o.id, now)
 		s.mu.Unlock()
 	}
 	s.mu.Lock()
@@ -205,6 +214,15 @@ func (s *Source) importArrayHistory(ctx context.Context, cl *ontap.Client, hist 
 	_ = s.save()
 	s.mu.Unlock()
 	slog.Info("ONTAP history imported", "source", s.id, "objects", len(todo))
+}
+
+// restoreHistory puts back the archive state an interrupted import found.
+func (s *Source) restoreHistory(state string) {
+	s.mu.Lock()
+	if strings.HasPrefix(s.st.HistoryState, "loading") {
+		s.st.HistoryState = state
+	}
+	s.mu.Unlock()
 }
 
 // refreshArray recomputes the summary shown for an ONTAP source.

@@ -81,7 +81,8 @@ if [ "$TAG" = "latest" ]; then
 		BUILD=1
 	fi
 fi
-# Pre-releases (v1.4.0-rc.1) are installed only when named with --tag.
+# Pre-releases (v1.4.0-rc.1) are installed only when named with --tag. Same
+# rule as .github/tag-kind.sh and internal/version.
 [[ "$TAG" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta|alpha)\.?[0-9]*)?|main)$ ]] || die "invalid tag: $TAG"
 
 bold "Installing rightsizer ${TAG}"

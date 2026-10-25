@@ -35,12 +35,16 @@ jobs:
           shellcheck install.sh
           awk "/^cat >\"\\\$\{BIN\}.new\" <<'WRAPPER'/{f=1;next} /^WRAPPER\$/{f=0} f" install.sh > launcher.sh
           test -s launcher.sh
-          shellcheck launcher.sh .github/release-notes.sh
+          shellcheck launcher.sh .github/release-notes.sh .github/tag-kind.sh
       - name: Go version of the image matches go.mod
         run: |
           want="$(sed -n 's/^toolchain go//p' go.mod)"
           got="$(sed -n 's/^FROM .*golang:\([0-9.]*\)-alpine.*/\1/p' Dockerfile)"
           [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::Dockerfile builds with Go $got but go.mod asks for $want"; exit 1; }
+      # Later jobs rely on this: a validated tag with a "-" is a pre-release.
+      - name: tag is a release or a pre-release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: sh .github/tag-kind.sh "$GITHUB_REF_NAME"
       - name: release notes in CHANGELOG.md
         if: startsWith(github.ref, 'refs/tags/v')
         run: sh .github/release-notes.sh "$GITHUB_REF_NAME" >/dev/null
@@ -214,7 +218,7 @@ jobs:
           # A tag such as v1.4.0-rc.1 is a pre-release: never the latest, so
           # installs, upgrades and update prompts keep the last full release.
           pre=""
-          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease --latest=false" ;; esac
+          [ "$(sh .github/tag-kind.sh "$GITHUB_REF_NAME")" = pre ] && pre="--prerelease --latest=false"
           # shellcheck disable=SC2086
           gh release create "$GITHUB_REF_NAME" install.sh rightsizer-*.ova SHA256SUMS --verify-tag --notes-file release-notes.md --title "rightsizer $GITHUB_REF_NAME" $pre
         env:

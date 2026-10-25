@@ -67,6 +67,31 @@ func TestAnonymise(t *testing.T) {
 	}
 }
 
+func TestAnonymiseConfiguredSources(t *testing.T) {
+	b := New()
+	b.Anonymise = true
+	b.Identify("host", "cluster1-mgmt.corp.example.com:443", "vcsa01.corp.example.com")
+	b.Identify("host", "10.20.30.40")
+	b.Identify("user", "svc_monitor", "readonly@vsphere.local")
+	b.JSON("collection.json", map[string]any{"Config": map[string]any{"Host": "cluster1-mgmt.corp.example.com:443", "User": "svc_monitor"}})
+	b.Text("logs.txt", `level=INFO msg="source added" host=cluster1-mgmt.corp.example.com:443 kind=ONTAP
+level=INFO msg="source added" host=vcsa01.corp.example.com user=readonly@vsphere.local
+dial tcp 10.20.30.40:443: i/o timeout (cluster1-mgmt)
+`)
+	files := read(t, b)
+	all := files["collection.json"] + files["logs.txt"]
+	for _, leak := range []string{"cluster1-mgmt", "corp.example.com", "vcsa01", "10.20.30.40", "svc_monitor", "readonly"} {
+		if strings.Contains(all, leak) {
+			t.Fatalf("%q left in the bundle:\n%s", leak, all)
+		}
+	}
+	for _, kept := range []string{":443", "kind=ONTAP", "i/o timeout", "source added"} {
+		if !strings.Contains(all, kept) {
+			t.Fatalf("%q must stay readable:\n%s", kept, all)
+		}
+	}
+}
+
 func TestPlainKeepsNamesButNotSecrets(t *testing.T) {
 	b := New()
 	b.Secrets = []string{"hunter2-password"}

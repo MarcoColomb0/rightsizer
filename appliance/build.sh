@@ -7,7 +7,7 @@
 set -euo pipefail
 
 VERSION="${1:?usage: build.sh vX.Y.Z [engine-image]}"
-[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "invalid version: $VERSION" >&2; exit 1; }
+sh "$(dirname "$0")/../.github/tag-kind.sh" "$VERSION" >/dev/null || exit 1
 ENGINE="${2:-ghcr.io/marcocolomb0/rightsizer:${VERSION#v}}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091

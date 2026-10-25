@@ -95,6 +95,8 @@ func diagnoseONTAP(args []string) error {
 	b := diag.New()
 	b.Anonymise = *anon
 	b.Secrets = []string{password}
+	b.Identify("host", host)
+	b.Identify("user", user)
 	b.Text("README.txt", "rightsizer ONTAP diagnostic bundle, written by rightsizer diagnose-ontap.\n\n"+
 		"checks.txt      what was checked, failures first\n"+
 		"diagnosis.json  the cluster's records and archive ranges as rightsizer read them\n"+

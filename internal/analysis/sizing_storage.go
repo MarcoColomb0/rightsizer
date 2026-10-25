@@ -43,6 +43,7 @@ type StorageSizing struct {
 	// cluster added. NetAppDatastores counts datastores on NetApp LUNs.
 	Array            ArrayReduction
 	Arrays           []ArraySizing
+	ArrayVolumes     []ArrayVolume
 	NetAppDatastores int
 }
 

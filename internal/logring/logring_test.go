@@ -22,6 +22,13 @@ func TestRing(t *testing.T) {
 	if strings.Contains(out.String(), "only in the ring") || strings.Count(out.String(), "poll") != 4 {
 		t.Fatalf("stderr %q", out.String())
 	}
+	// Groups and attributes come out in the ring as on stderr.
+	out.Reset()
+	l.WithGroup("a").With("k", 1).WithGroup("b").Info("x", "v", 2)
+	got := r.Lines()[2]
+	if !strings.Contains(got, "a.k=1 a.b.v=2") || !strings.Contains(out.String(), "a.k=1 a.b.v=2") {
+		t.Fatalf("ring %q, stderr %q", got, out.String())
+	}
 	var nilRing *Ring
 	if nilRing.Lines() != nil {
 		t.Fatal("no ring, no lines")

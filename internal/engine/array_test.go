@@ -191,7 +191,7 @@ func TestONTAPSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, body := range unzip(t, anon.URL) {
-		for _, leak := range []string{"svm_vmware", "ds_fc", "aff01-01", "cluster aff01", "80AbK0000001", naa} {
+		for _, leak := range []string{"svm_vmware", "ds_fc", "aff01-01", "cluster aff01", "80AbK0000001", naa, arr.Host(), arr.User} {
 			if strings.Contains(body, leak) {
 				t.Fatalf("anonymised %s leaks %q", name, leak)
 			}

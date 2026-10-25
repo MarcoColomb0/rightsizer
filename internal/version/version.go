@@ -35,7 +35,8 @@ func IsPre(v string) bool {
 }
 
 // preSuffix is a release candidate, beta or alpha such as -rc.1; other
-// suffixes, like git describe's -12-gabcdef, are development builds.
+// suffixes, like git describe's -12-gabcdef, are development builds. Same
+// rule as .github/tag-kind.sh and install.sh.
 var preSuffix = regexp.MustCompile(`^(rc|beta|alpha)\.?[0-9]*$`)
 
 func parse(v string) ([3]int, bool, bool) {

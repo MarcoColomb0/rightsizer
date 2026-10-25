@@ -135,6 +135,21 @@ func TestSizeArrays(t *testing.T) {
 	}
 }
 
+func TestSnapshotOnlyVolumeAddsNoReduction(t *testing.T) {
+	in, inv := arrayFixture(t)
+	before := Size(in).Storage.Array
+	v := &inv.Volumes[0]
+	v.SnapshotUsed = v.Physical
+	after := Size(in).Storage.Array
+	if after.Logical >= before.Logical || after.Snapshots <= before.Snapshots {
+		t.Fatalf("a volume holding only Snapshot copies: logical %d → %d, snapshots %d → %d", before.Logical, after.Logical, before.Snapshots, after.Snapshots)
+	}
+	// Only nfs01 (2:1 plus compaction) is left in the measurement.
+	if after.Ratio() >= before.Ratio() || after.Ratio() < 2 || after.Ratio() > 2.3 {
+		t.Fatalf("reduction %v → %v", before.Ratio(), after.Ratio())
+	}
+}
+
 func TestNetAppHintWithoutArrays(t *testing.T) {
 	in, _ := arrayFixture(t)
 	in.Arrays = nil
@@ -164,11 +179,28 @@ func TestMergeSizingKeepsOneArray(t *testing.T) {
 	a := Size(in)
 	b := Size(in)
 	m := MergeSizing([]*Sizing{a, b})
-	if len(m.Storage.Arrays) != 1 || m.Storage.Array.Datastores != 4 || m.Storage.Arrays[0].Matched != 4 {
-		t.Fatalf("merged %+v", m.Storage.Array)
+	ms, as := m.Storage, a.Storage
+	if len(ms.Arrays) != 1 || ms.Array.Datastores != 4 || ms.Arrays[0].Matched != 4 {
+		t.Fatalf("merged %+v", ms.Array)
 	}
-	if math.Abs(m.Storage.Array.Ratio()-a.Storage.Array.Ratio()) > 1e-9 || m.Storage.Array.PlanPhysical == 0 {
-		t.Fatalf("merged ratio %v vs %v", m.Storage.Array.Ratio(), a.Storage.Array.Ratio())
+	// Both vCenters use the same two volumes: they count once.
+	if ms.Array.Logical != as.Array.Logical || ms.Array.Snapshots != as.Array.Snapshots || len(ms.ArrayVolumes) != 2 {
+		t.Fatalf("shared volumes counted twice: logical %d vs %d, %d volumes", ms.Array.Logical, as.Array.Logical, len(ms.ArrayVolumes))
+	}
+	if x := ms.Arrays[0]; x.Volumes != 2 || x.MatchedData != as.Arrays[0].MatchedData || x.OtherData != as.Arrays[0].OtherData {
+		t.Fatalf("merged cluster: %d volumes, data %d other %d", x.Volumes, x.MatchedData, x.OtherData)
+	}
+	if math.Abs(ms.Array.Ratio()-as.Array.Ratio()) > 1e-9 || ms.Array.PlanPhysical == 0 {
+		t.Fatalf("merged ratio %v vs %v", ms.Array.Ratio(), as.Array.Ratio())
+	}
+
+	// A third vCenter on another volume of the same cluster adds it.
+	c, _ := arrayFixture(t)
+	c.Estate.Datastores = c.Estate.Datastores[1:2]
+	c.Arrays[0].Inv.Volumes[1].UUID = "other-volume"
+	m = MergeSizing([]*Sizing{a, Size(c)})
+	if len(m.Storage.ArrayVolumes) != 3 || m.Storage.Arrays[0].Volumes != 3 {
+		t.Fatalf("a volume only the third vCenter uses must be added: %d", len(m.Storage.ArrayVolumes))
 	}
 }
 

@@ -219,3 +219,15 @@ func TestHistoryPlan(t *testing.T) {
 		t.Fatalf("short plan %+v", p)
 	}
 }
+
+func TestTotalsSkipAggregatesWithoutRatio(t *testing.T) {
+	inv := &ontap.Inventory{Aggregates: []ontap.Aggregate{
+		{Name: "a", Logical: 30 << 40, Ratio: 3, LogicalNoSnap: 30 << 40, RatioNoSnap: 3},
+		// Logical reported, ratio not: as when a field was refused.
+		{Name: "b", Logical: 50 << 40},
+	}}
+	tt := inv.Totals()
+	if tt.Logical != 30<<40 || tt.Ratio != 3 || tt.RatioNoSnap != 3 {
+		t.Fatalf("totals %+v", tt)
+	}
+}

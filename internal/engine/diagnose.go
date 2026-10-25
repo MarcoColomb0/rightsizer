@@ -85,6 +85,11 @@ func (e *Engine) Diagnose(ctx context.Context, id string, anonymise bool) (*repo
 	if password != "" {
 		b.Secrets = append(b.Secrets, password)
 	}
+	for _, src := range e.list() {
+		c := src.status(false).Config
+		b.Identify("host", c.Host)
+		b.Identify("user", c.User)
+	}
 	b.Text("README.txt", diagReadme)
 	estates := e.estatesByHost()
 	var rows []analysis.MatchRow

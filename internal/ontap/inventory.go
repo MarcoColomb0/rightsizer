@@ -396,7 +396,9 @@ func (c *Client) Inventory(ctx context.Context) (*Inventory, error) {
 	return inv, nil
 }
 
-// Totals sums the cluster's aggregates.
+// Totals sums the cluster's aggregates. Logical data counts only where its
+// aggregate reports a ratio, so the cluster ratio never divides data with
+// no physical counterpart.
 type Totals struct {
 	Size, Used, Physical, Logical, LogicalNoSnap, Snapshots, Inactive int64
 	Ratio, RatioNoSnap                                                float64
@@ -409,14 +411,14 @@ func (inv *Inventory) Totals() Totals {
 		t.Size += a.Size
 		t.Used += a.Used
 		t.Physical += a.PhysicalUsed
-		t.Logical += a.Logical
-		t.LogicalNoSnap += a.LogicalNoSnap
 		t.Snapshots += a.SnapshotUsed
 		t.Inactive += a.Inactive
 		if a.Ratio > 0 {
+			t.Logical += a.Logical
 			phys += float64(a.Logical) / a.Ratio
 		}
 		if a.RatioNoSnap > 0 {
+			t.LogicalNoSnap += a.LogicalNoSnap
 			physNS += float64(a.LogicalNoSnap) / a.RatioNoSnap
 		}
 	}

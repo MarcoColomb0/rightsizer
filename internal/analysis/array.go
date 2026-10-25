@@ -169,6 +169,20 @@ type AggregateSizing struct {
 	Snapshots int64
 }
 
+// ArrayVolume is one matched volume's share of the measurement, kept so
+// vCenters sharing a volume count it once when combined.
+type ArrayVolume struct {
+	Array     string
+	UUID      string
+	Data      int64
+	Logical   int64
+	Physical  int64
+	Reduced   float64
+	Snapshots int64
+}
+
+func arrayID(a *ArrayInput) string { return a.Host + "/" + a.Inv.Cluster.Name }
+
 // DatastoreArray is the ONTAP storage behind a datastore.
 type DatastoreArray struct {
 	Cluster   string
@@ -426,12 +440,18 @@ func sizeArrays(sz *Sizing, arrays []ArrayInput) {
 			continue
 		}
 		seen[key] = true
-		s.Array.Logical += lg
-		s.Array.Physical += ph
-		s.Array.Snapshots += v.SnapshotUsed
-		if da.Ratio > 0 {
-			s.Array.Reduced += float64(lg) / da.Ratio
+		av := ArrayVolume{Array: arrayID(a), UUID: key, Data: lg, Snapshots: v.SnapshotUsed}
+		// A volume holding nothing outside its Snapshot copies has no
+		// measurable reduction: its savings would count with nothing
+		// written against them.
+		if ph > 0 && da.Ratio > 0 {
+			av.Logical, av.Physical, av.Reduced = lg, ph, float64(lg)/da.Ratio
 		}
+		s.ArrayVolumes = append(s.ArrayVolumes, av)
+		s.Array.Logical += av.Logical
+		s.Array.Physical += av.Physical
+		s.Array.Reduced += av.Reduced
+		s.Array.Snapshots += av.Snapshots
 	}
 	if r := s.Array.Ratio(); r > 0 {
 		s.Array.PlanPhysical = int64(float64(s.Plan) / r)
@@ -558,23 +578,42 @@ func mergeArrays(out *StorageSizing, in StorageSizing) {
 	o.Of += in.Array.Of
 	o.Used += in.Array.Used
 	o.OfUsed += in.Array.OfUsed
-	o.Logical += in.Array.Logical
-	o.Physical += in.Array.Physical
-	o.Reduced += in.Array.Reduced
-	o.Snapshots += in.Array.Snapshots
 	out.NetAppDatastores += in.NetAppDatastores
+	known := map[string]bool{}
+	for _, a := range out.Arrays {
+		known[a.Host+"/"+a.Name] = true
+	}
+	seen := map[string]bool{}
+	for _, v := range out.ArrayVolumes {
+		seen[v.UUID] = true
+	}
+	// A volume serving datastores of several vCenters counts once.
+	newData, newVols := map[string]int64{}, map[string]int{}
+	for _, v := range in.ArrayVolumes {
+		if seen[v.UUID] {
+			continue
+		}
+		seen[v.UUID] = true
+		out.ArrayVolumes = append(out.ArrayVolumes, v)
+		o.Logical += v.Logical
+		o.Physical += v.Physical
+		o.Reduced += v.Reduced
+		o.Snapshots += v.Snapshots
+		newData[v.Array] += v.Data
+		newVols[v.Array]++
+	}
 	for _, a := range in.Arrays {
-		i := slices.IndexFunc(out.Arrays, func(b ArraySizing) bool { return b.Name == a.Name && b.Host == a.Host })
-		if i < 0 {
+		key := a.Host + "/" + a.Name
+		if !known[key] {
 			out.Arrays = append(out.Arrays, a)
 			continue
 		}
+		i := slices.IndexFunc(out.Arrays, func(b ArraySizing) bool { return b.Host+"/"+b.Name == key })
 		b := &out.Arrays[i]
-		// Each vCenter sees only its own datastores on the cluster.
-		b.Volumes += a.Volumes
 		b.Matched += a.Matched
-		b.MatchedData += a.MatchedData
-		b.OtherData = max(b.OtherData-a.MatchedData, 0)
+		b.Volumes += newVols[key]
+		b.MatchedData += newData[key]
+		b.OtherData = max(b.OtherData-newData[key], 0)
 	}
 	slices.SortFunc(out.Arrays, func(a, b ArraySizing) int { return strings.Compare(a.Name, b.Name) })
 }

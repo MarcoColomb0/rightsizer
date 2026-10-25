@@ -12,9 +12,9 @@ section() {
 	' "${2:-CHANGELOG.md}" | sed -e '/./,$!d'
 }
 notes="$(section "$tag" "${2:-CHANGELOG.md}")"
-case "$tag" in
-*-*) [ -n "$notes" ] || notes="$(section Unreleased "${2:-CHANGELOG.md}")" ;;
-esac
+if [ -z "$notes" ] && [ "$(sh "$(dirname "$0")/tag-kind.sh" "$tag" 2>/dev/null)" = pre ]; then
+	notes="$(section Unreleased "${2:-CHANGELOG.md}")"
+fi
 if [ -z "$notes" ]; then
 	echo "CHANGELOG.md has no notes for $tag: add a \"## $tag - YYYY-MM-DD\" section" >&2
 	exit 1

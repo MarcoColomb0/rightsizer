@@ -4,9 +4,10 @@
 package logring
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 )
 
@@ -44,54 +45,51 @@ func (r *Ring) Lines() []string {
 	return append(append([]string(nil), r.lines[r.next:]...), r.lines[:r.next]...)
 }
 
+// Write keeps one record: slog's text handler writes each in one call.
+func (r *Ring) Write(p []byte) (int, error) {
+	r.add(strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
 // Handler records at level and above into the ring and passes records to
-// next at next's own level.
+// next at next's own level. Both see the same attributes and groups.
 func (r *Ring) Handler(level slog.Level, next slog.Handler) slog.Handler {
-	return &tee{ring: r, level: level, next: next}
+	return fanout{slog.NewTextHandler(r, &slog.HandlerOptions{Level: level}), next}
 }
 
-type tee struct {
-	ring  *Ring
-	level slog.Level
-	next  slog.Handler
-	attrs []slog.Attr
-	group string
-}
+type fanout []slog.Handler
 
-func (t *tee) Enabled(ctx context.Context, l slog.Level) bool {
-	return l >= t.level || t.next.Enabled(ctx, l)
-}
-
-func (t *tee) Handle(ctx context.Context, rec slog.Record) error {
-	if rec.Level >= t.level {
-		var buf bytes.Buffer
-		h := slog.Handler(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-		if len(t.attrs) > 0 {
-			h = h.WithAttrs(t.attrs)
-		}
-		if t.group != "" {
-			h = h.WithGroup(t.group)
-		}
-		if err := h.Handle(ctx, rec); err == nil {
-			t.ring.add(string(bytes.TrimRight(buf.Bytes(), "\n")))
+func (f fanout) Enabled(ctx context.Context, l slog.Level) bool {
+	for _, h := range f {
+		if h.Enabled(ctx, l) {
+			return true
 		}
 	}
-	if t.next.Enabled(ctx, rec.Level) {
-		return t.next.Handle(ctx, rec)
+	return false
+}
+
+func (f fanout) Handle(ctx context.Context, rec slog.Record) error {
+	var errs []error
+	for _, h := range f {
+		if h.Enabled(ctx, rec.Level) {
+			errs = append(errs, h.Handle(ctx, rec.Clone()))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-func (t *tee) WithAttrs(as []slog.Attr) slog.Handler {
-	c := *t
-	c.attrs = append(append([]slog.Attr(nil), t.attrs...), as...)
-	c.next = t.next.WithAttrs(as)
-	return &c
+func (f fanout) WithAttrs(as []slog.Attr) slog.Handler {
+	out := make(fanout, len(f))
+	for i, h := range f {
+		out[i] = h.WithAttrs(as)
+	}
+	return out
 }
 
-func (t *tee) WithGroup(name string) slog.Handler {
-	c := *t
-	c.group = name
-	c.next = t.next.WithGroup(name)
-	return &c
+func (f fanout) WithGroup(name string) slog.Handler {
+	out := make(fanout, len(f))
+	for i, h := range f {
+		out[i] = h.WithGroup(name)
+	}
+	return out
 }
