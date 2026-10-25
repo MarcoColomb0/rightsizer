@@ -34,6 +34,7 @@ type fake struct {
 	sized    []string
 	stopped  []string
 	extended string
+	channel  []bool
 }
 
 func (f *fake) Sizing(string) (*analysis.Sizing, error) {
@@ -52,6 +53,13 @@ func (f *fake) SetSizingParams(p analysis.SizingParams) error {
 	}
 	f.params = p
 	return nil
+}
+func (f *fake) SetPreReleases(on bool) (*appliance.Release, error) {
+	f.channel = append(f.channel, on)
+	if on {
+		return &appliance.Release{Tag: "v1.4.0-rc.3", URL: "https://example/rc3", Notes: []appliance.Note{{Tag: "v1.4.0-rc.3", Body: "### Added\n- ONTAP"}}}, nil
+	}
+	return &appliance.Release{Tag: "v1.0.0"}, nil
 }
 func (f *fake) PublishSizing(id string) (*report.Share, error) {
 	f.sized = append(f.sized, id)
@@ -172,7 +180,7 @@ func run(m Model, cmd tea.Cmd) Model {
 		for _, c := range msg {
 			m = run(m, c)
 		}
-	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg, sizingMsg, sizingParamsMsg, notesMsg, list.FilterMatchesMsg:
+	case summaryMsg, sourceMsg, doneMsg, probeMsg, exclusionsMsg, sizingMsg, sizingParamsMsg, notesMsg, channelMsg, list.FilterMatchesMsg:
 		nm, next := m.Update(msg)
 		m = run(asModel(nm), next)
 	}
@@ -270,6 +278,39 @@ func TestAddSource(t *testing.T) {
 	}
 	if m.scr != scrSource || m.cur != "abcd1234" {
 		t.Fatal("new source must open")
+	}
+}
+
+func TestPreReleaseChannel(t *testing.T) {
+	f := fakeDemo()
+	m := New(f, Options{Version: "v1.0.0", Latest: "v1.0.0", CanUpgrade: true, Appliance: true, Channel: true})
+	m = send(t, m, m.fetch()(), typ("?"))
+	view(t, m, "P join pre-releases")
+	m = send(t, m, typ("?"), typ("P"))
+	view(t, m, "Join the pre-release channel?", "no way back")
+	m = send(t, m, typ("y"))
+	if len(f.channel) != 1 || !f.channel[0] || !m.opt.PreReleases {
+		t.Fatalf("join not requested: %v", f.channel)
+	}
+	if m.scr != scrUpdate {
+		t.Fatalf("the release candidate must be offered at once, screen %v", m.scr)
+	}
+	view(t, m, "v1.4.0-rc.3", "is a release candidate", "no way back to v1.0.0")
+	m = send(t, m, typ("n"))
+	view(t, m, "Pre-release channel", "Press P to leave", "↑ v1.4.0-rc.3 available")
+	m = send(t, m, typ("P"))
+	view(t, m, "Leave the pre-release channel?")
+	m = send(t, m, typ("y"))
+	if len(f.channel) != 2 || f.channel[1] || m.opt.PreReleases || m.updateAvailable() {
+		t.Fatalf("leave: %v, update %v", f.channel, m.updateAvailable())
+	}
+	view(t, m, "Pre-release channel left")
+
+	// Docker installs and appliances with update checks off have no channel.
+	d := New(f, Options{Version: "v1.0.0"})
+	d = send(t, d, d.fetch()(), typ("P"))
+	if d.confirm != "" {
+		t.Fatal("no channel without the appliance's release checks")
 	}
 }
 

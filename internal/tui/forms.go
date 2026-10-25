@@ -9,6 +9,7 @@ import (
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
+	"github.com/MarcoColomb0/rightsizer/internal/version"
 )
 
 // field renders one form row; the focused row gets an accent bar.
@@ -215,6 +216,10 @@ func (m Model) viewUpdate() (string, []zone) {
 	}
 
 	var after stack
+	if version.IsPre(m.opt.Latest) {
+		after.add("", t.callout(t.wrn.Bold(true).Render(m.opt.Latest+" is a release candidate")+"\n"+
+			t.mute.Render("It is published for testing and may have bugs. There is no way back to "+m.opt.Version+" afterwards; its final release is offered when published."), t.warn, m.notesWidth()))
+	}
 	after.add("", t.faint.Render("The upgrade downloads first, stops the engine cleanly, backs up your data, and rolls back on its own if anything fails."))
 	if m.sum != nil {
 		for _, src := range m.sum.Sources {

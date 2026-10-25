@@ -79,6 +79,12 @@ The appliance asks for a restart only when one is needed: after an upgrade that 
 
 In the Docker install, the `rightsizer` launcher performs the upgrade and first offers an update for itself.
 
+### Pre-releases
+
+Release candidates such as v1.4.0-rc.1 let you try new features before they are released. They are never offered by default. On the appliance, press `P` on the home screen to join the pre-release channel: release candidates are then offered like any upgrade, with the same backup and rollback, and the home screen shows that the channel is on. Press `P` again to leave; the version installed stays until the next full release replaces it. There is no way back to an earlier version, so try release candidates on an appliance whose data you can afford to collect again. The channel needs release checks, so it is not offered when they are turned off in the vApp options.
+
+In the Docker install, install a release candidate by name: `install.sh --tag v1.4.0-rc.1`.
+
 ### Older appliances
 
 Appliances deployed before v0.6.0 can upgrade their engine but not the appliance layer; deploy a newer OVA once, and later releases update everything. Appliances deployed before v0.8.0 run Flatcar stable and stay on it, because Flatcar never downgrades; deploy a newer OVA to use LTS.

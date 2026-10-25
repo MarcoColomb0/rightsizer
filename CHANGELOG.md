@@ -2,6 +2,12 @@
 
 Notable changes to rightsizer. Each section becomes the notes of its GitHub release and is shown in the console's update prompt. Add new entries under **Unreleased**; when tagging, rename it to the version and date. Earlier releases are listed on the [releases page](https://github.com/MarcoColomb0/rightsizer/releases).
 
+## v1.3.1 - 2026-10-25
+
+### Added
+
+- Pre-release channel for the appliance: press `P` on the home screen to have release candidates offered as upgrades, with the usual backup and rollback, and again to leave it. Off by default.
+
 ## v1.3.0 - 2026-10-25
 
 ### Changed

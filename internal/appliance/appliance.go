@@ -26,7 +26,12 @@ import (
 
 const Repo = "MarcoColomb0/rightsizer"
 
-var tagRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+var (
+	tagRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+	// preTagRE adds pre-releases such as v1.4.0-rc.1, offered only on the
+	// pre-release channel. Same rule as the appliance host script.
+	preTagRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]*)?$`)
+)
 
 type Release struct {
 	Tag string
@@ -43,12 +48,28 @@ type Note struct {
 	Body string
 }
 
-// Checker polls GitHub for the latest release.
+// Checker polls GitHub for the latest release, including pre-releases
+// while Pre reports the pre-release channel on.
 type Checker struct {
 	Current string
+	Pre     func() bool
 
 	mu     sync.Mutex
 	latest Release
+}
+
+func (c *Checker) pre() bool { return c.Pre != nil && c.Pre() }
+
+// Refresh checks now, as after switching channel.
+func (c *Checker) Refresh(ctx context.Context) (Release, error) {
+	r, err := Fetch(ctx, c.Current, c.pre())
+	if err != nil {
+		return Release{}, err
+	}
+	c.mu.Lock()
+	c.latest = r
+	c.mu.Unlock()
+	return r, nil
 }
 
 func (c *Checker) Latest() Release {
@@ -59,11 +80,7 @@ func (c *Checker) Latest() Release {
 
 func (c *Checker) Run(ctx context.Context, every time.Duration) {
 	for {
-		if r, err := Fetch(ctx, c.Current); err == nil {
-			c.mu.Lock()
-			c.latest = r
-			c.mu.Unlock()
-		}
+		_, _ = c.Refresh(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -78,8 +95,9 @@ const (
 )
 
 // Fetch reads the published releases and returns the latest one with the
-// notes of every release newer than current.
-func Fetch(ctx context.Context, current string) (Release, error) {
+// notes of every release newer than current. With pre, pre-releases count
+// too.
+func Fetch(ctx context.Context, current string, pre bool) (Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+Repo+"/releases?per_page=50", nil)
@@ -99,7 +117,7 @@ func Fetch(ctx context.Context, current string) (Release, error) {
 	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&list); err != nil {
 		return Release{}, err
 	}
-	return latestOf(list, current)
+	return latestOf(list, current, pre)
 }
 
 type release struct {
@@ -110,17 +128,26 @@ type release struct {
 	PublishedAt time.Time `json:"published_at"`
 }
 
-func latestOf(list []release, current string) (Release, error) {
+func latestOf(list []release, current string, pre bool) (Release, error) {
 	var notes []Note
 	latest := ""
+	newer := version.Newer
+	if pre {
+		newer = version.NewerAny
+	}
 	for _, r := range list {
-		if r.Draft || r.Prerelease || !tagRE.MatchString(r.TagName) {
+		switch {
+		case r.Draft:
+			continue
+		case pre && (!preTagRE.MatchString(r.TagName) || r.Prerelease != version.IsPre(r.TagName)):
+			continue
+		case !pre && (r.Prerelease || !tagRE.MatchString(r.TagName)):
 			continue
 		}
-		if latest == "" || version.Newer(r.TagName, latest) {
+		if latest == "" || version.NewerAny(r.TagName, latest) {
 			latest = r.TagName
 		}
-		if version.Newer(r.TagName, current) {
+		if newer(r.TagName, current) {
 			notes = append(notes, Note{Tag: r.TagName, Date: r.PublishedAt, Body: clipNote(r.Body)})
 		}
 	}
@@ -129,9 +156,9 @@ func latestOf(list []release, current string) (Release, error) {
 	}
 	slices.SortFunc(notes, func(a, b Note) int {
 		switch {
-		case version.Newer(a.Tag, b.Tag):
+		case version.NewerAny(a.Tag, b.Tag):
 			return -1
-		case version.Newer(b.Tag, a.Tag):
+		case version.NewerAny(b.Tag, a.Tag):
 			return 1
 		}
 		return 0
@@ -162,9 +189,38 @@ type UpgradeStatus struct {
 	Time    time.Time
 }
 
-// RequestUpgrade asks the appliance host to upgrade the engine.
+func (h Host) channelPath() string { return filepath.Join(h.Dir, "pre-releases") }
+
+// PreReleases reports whether the appliance follows the pre-release
+// channel: release candidates are offered as upgrades.
+func (h Host) PreReleases() bool {
+	_, err := os.Stat(h.channelPath())
+	return err == nil
+}
+
+// SetPreReleases joins or leaves the pre-release channel. Leaving keeps the
+// version installed; the next full release is offered as usual.
+func (h Host) SetPreReleases(on bool) error {
+	if !on {
+		if err := os.Remove(h.channelPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(h.Dir, 0o700); err != nil {
+		return err
+	}
+	return atomicfile.WriteFile(h.channelPath(), []byte("on\n"), 0o600)
+}
+
+// RequestUpgrade asks the appliance host to upgrade the engine. A
+// pre-release is accepted only on the pre-release channel.
 func (h Host) RequestUpgrade(tag string) error {
-	if !tagRE.MatchString(tag) || !version.Newer(tag, h.Current) {
+	ok := tagRE.MatchString(tag) && version.Newer(tag, h.Current)
+	if h.PreReleases() {
+		ok = preTagRE.MatchString(tag) && version.NewerAny(tag, h.Current)
+	}
+	if !ok {
 		return fmt.Errorf("%q is not a newer release", tag)
 	}
 	if err := os.MkdirAll(h.Dir, 0o700); err != nil {

@@ -94,7 +94,12 @@ type (
 		id   string
 		err  error
 	}
-	tickMsg time.Time
+	tickMsg    time.Time
+	channelMsg struct {
+		on  bool
+		rel *appliance.Release
+		err error
+	}
 )
 
 type Options struct {
@@ -109,6 +114,10 @@ type Options struct {
 	// Notes returns the release notes of every version newer than the
 	// running one, shown on the update prompt.
 	Notes func() ([]appliance.Note, error)
+	// Channel offers the pre-release channel (appliance, update checks on);
+	// PreReleases is whether it is joined.
+	Channel     bool
+	PreReleases bool
 }
 
 type Model struct {
@@ -269,8 +278,10 @@ func input(placeholder string, secret bool) textinput.Model {
 
 func (m Model) UpgradeRequested() bool { return m.upgrade }
 
+// updateAvailable compares with pre-releases too: Latest is one only on
+// the pre-release channel.
 func (m Model) updateAvailable() bool {
-	return m.opt.CanUpgrade && version.Newer(m.opt.Latest, m.opt.Version)
+	return m.opt.CanUpgrade && version.NewerAny(m.opt.Latest, m.opt.Version)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -377,6 +388,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case doneMsg:
 		return m.done(msg)
+	case channelMsg:
+		return m.channelDone(msg)
 	case sizingMsg:
 		if msg.id != m.cur {
 			return m, nil
@@ -659,6 +672,13 @@ func (m Model) keyHome(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.confirm == "channel" {
+		m.confirm = ""
+		if k.String() == "y" || k.String() == "Y" {
+			return m.switchChannel()
+		}
+		return m, nil
+	}
 	n := 0
 	if m.sum != nil {
 		n = len(m.sum.Sources)
@@ -725,6 +745,10 @@ func (m Model) keyHome(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "R":
 		if m.canReboot() {
 			m.ask("reboot")
+		}
+	case "P":
+		if m.opt.Channel {
+			m.ask("channel")
 		}
 	}
 	m.pager.Page = m.sel / max(m.pager.PerPage, 1)
@@ -1041,4 +1065,47 @@ func (m Model) keyUpdate(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.scrollNotes(10)
 	}
 	return m, nil
+}
+
+// switchChannel joins or leaves the pre-release channel and checks for
+// releases on the new channel.
+func (m Model) switchChannel() (tea.Model, tea.Cmd) {
+	on := !m.opt.PreReleases
+	m.back, m.scr, m.err = scrHome, scrBusy, ""
+	m.busy = "Joining the pre-release channel and checking for releases"
+	if !on {
+		m.busy = "Leaving the pre-release channel"
+	}
+	b := m.b
+	return m, tea.Batch(m.spin.Tick, m.startWatch(), func() tea.Msg {
+		r, err := b.SetPreReleases(on)
+		return channelMsg{on, r, err}
+	})
+}
+
+func (m Model) channelDone(msg channelMsg) (tea.Model, tea.Cmd) {
+	m.busy = ""
+	stop := m.watch.Stop()
+	m.scr = scrHome
+	if msg.err != nil {
+		m.err = msg.err.Error()
+		return m, stop
+	}
+	m.opt.PreReleases = msg.on
+	if r := msg.rel; r != nil && r.Tag != "" {
+		notes := r.Notes
+		m.opt.Latest, m.opt.ReleaseURL = r.Tag, r.URL
+		m.opt.Notes = func() ([]appliance.Note, error) { return notes, nil }
+		m.notes, m.notesErr, m.notesOff = nil, "", 0
+	}
+	switch {
+	case msg.on && m.updateAvailable():
+		m.showUpdate()
+		return m, tea.Batch(stop, m.fetchNotes())
+	case msg.on:
+		m.note = "Pre-release channel joined. Release candidates will be offered when published."
+	default:
+		m.note = "Pre-release channel left. Only full releases are offered."
+	}
+	return m, stop
 }

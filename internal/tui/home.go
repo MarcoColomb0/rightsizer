@@ -103,6 +103,10 @@ func (m Model) homeExtras() string {
 	if len(m.sum.Shares) > 0 {
 		parts = append(parts, m.sharesBox(m.sum.Shares, m.sum.Sources))
 	}
+	if m.opt.PreReleases {
+		parts = append(parts, t.callout(t.inf.Bold(true).Render("Pre-release channel")+"\n"+
+			t.mute.Render("Release candidates are offered as upgrades. Press P to leave."), t.info, m.bodyW()))
+	}
 	if u := m.sum.Upgrade; u != nil && time.Since(u.Time) < 24*time.Hour {
 		msg := fmt.Sprintf("Upgrade to %s: %s", u.Version, u.State)
 		if u.Message != "" {
