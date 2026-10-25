@@ -64,6 +64,7 @@ type csvTable struct {
 
 func gib(b int64) string  { return strconv.FormatFloat(float64(b)/(1<<30), 'f', 2, 64) }
 func f1(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
+func f2(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }
 func itoa(v int) string   { return strconv.Itoa(v) }
 func i64(v int64) string  { return strconv.FormatInt(v, 10) }
 func yes(b bool) string   { return strconv.FormatBool(b) }
@@ -144,7 +145,8 @@ func sizingTables(sz *analysis.Sizing) []csvTable {
 	}
 
 	ds := csvTable{name: "datastores.csv", head: []string{"datastore", "type", "protocol", "capacity_gib", "used_gib", "free_gib", "provisioned_gib", "vms", "hosts", "local", "ssd",
-		"nfs_export", "luns", "iops_percentile", "iops_peak", "read_pct", "mbps_percentile", "latency_ms_percentile"}}
+		"nfs_export", "luns", "iops_percentile", "iops_peak", "read_pct", "mbps_percentile", "latency_ms_percentile",
+		"ontap_cluster", "ontap_svm", "ontap_volume", "ontap_aggregate", "ontap_logical_gib", "ontap_physical_gib", "ontap_reduction", "ontap_snapshots_gib", "ontap_iops_percentile", "ontap_latency_ms_percentile"}}
 	for _, d := range sz.Datastores {
 		var luns []string
 		for _, l := range d.LUNs {
@@ -152,6 +154,12 @@ func sizingTables(sz *analysis.Sizing) []csvTable {
 		}
 		ds.rows = append(ds.rows, []string{d.Name, d.Version, d.Protocol, gib(d.Capacity), gib(d.Used), gib(d.Free), gib(d.Provisioned), itoa(d.VMs), itoa(len(d.Hosts)), yes(d.Local), yes(d.SSD),
 			d.Remote, strings.Join(luns, "; "), f1(d.IO.IOPS), f1(d.IO.IOPSPeak), f1(d.IO.ReadPct), known(d.IO.Throughput, d.IO.MBps), known(d.IO.Latency, d.IO.LatencyMs)})
+		if a := d.Array; a != nil {
+			ds.rows[len(ds.rows)-1] = append(ds.rows[len(ds.rows)-1], a.Cluster, a.SVM, a.Volume, a.Aggregate, gib(a.Logical), gib(a.Physical), f2(a.Ratio), gib(a.Snapshots),
+				known(a.IOPS > 0, a.IOPS), known(a.Latency, a.LatencyMs))
+		} else {
+			ds.rows[len(ds.rows)-1] = append(ds.rows[len(ds.rows)-1], "", "", "", "", "", "", "", "", "", "")
+		}
 	}
 
 	wl := csvTable{name: "workloads.csv", head: []string{"workload", "vms", "vms_on", "vcpu", "memory_mib", "recommended_vcpu", "recommended_memory_mib", "raw_used_gib", "provisioned_gib", "guest_used_gib", "iops_avg"}}
@@ -166,5 +174,27 @@ func sizingTables(sz *analysis.Sizing) []csvTable {
 		{"orphaned_not_included", gib(st.Orphans)}, {"powered_off_vms", gib(st.PoweredOff)}, {"provisioned", gib(st.Provisioned)},
 		{"guest_used", gib(st.GuestUsed)}, {"datastore_capacity", gib(st.Capacity)}, {"datastore_used", gib(st.Used)},
 	}}
-	return []csvTable{sum, cls, needs, opts, wl, vms, ds, hosts, adapters, vmk}
+	tables := []csvTable{sum, cls, needs, opts, wl, vms, ds, hosts, adapters, vmk}
+	if len(st.Arrays) == 0 {
+		return tables
+	}
+	r := st.Array
+	sum.rows = append(sum.rows, []string{"ontap_datastore_used", gib(r.Used)}, []string{"ontap_active_logical", gib(r.Logical)},
+		[]string{"ontap_after_volume_savings", gib(r.Physical)}, []string{"ontap_array_snapshots", gib(r.Snapshots)},
+		[]string{"planned_physical_at_measured_reduction", gib(r.PlanPhysical)})
+	tables[0] = sum
+	arr := csvTable{name: "ontap-clusters.csv", head: []string{"cluster", "host", "ontap", "nodes", "models", "usable_gib", "used_gib", "written_gib", "logical_gib", "reduction",
+		"snapshots_gib", "inactive_gib", "datastores", "volumes", "datastore_data_gib", "other_data_gib", "iops_percentile", "iops_peak", "mbps_percentile", "latency_ms_percentile",
+		"cpu_pct_percentile", "cpu_pct_peak", "busiest_node", "hours", "from_archive"}}
+	aggr := csvTable{name: "ontap-aggregates.csv", head: []string{"cluster", "aggregate", "node", "media", "raid", "disks", "usable_gib", "used_gib", "written_gib", "logical_gib", "reduction", "inactive_gib", "snapshots_gib"}}
+	for _, a := range st.Arrays {
+		arr.rows = append(arr.rows, []string{a.Name, a.Host, a.Version, itoa(a.Nodes), a.Models, gib(a.Size), gib(a.Used), gib(a.Physical), gib(a.Logical), f2(a.Ratio),
+			gib(a.Snapshots), gib(a.Inactive), itoa(a.Matched), itoa(a.Volumes), gib(a.MatchedData), gib(a.OtherData),
+			known(a.IO.Available, a.IO.IOPS), known(a.IO.Available, a.IO.IOPSPeak), known(a.IO.Throughput, a.IO.MBps), known(a.IO.Latency, a.IO.LatencyMs),
+			known(a.CPU > 0, a.CPU), known(a.CPUPeak > 0, a.CPUPeak), a.CPUNode, f1(a.Hours), yes(a.Preview)})
+		for _, g := range a.Aggregates {
+			aggr.rows = append(aggr.rows, []string{a.Name, g.Name, g.Node, g.Type, g.RAID, itoa(g.Disks), gib(g.Size), gib(g.Used), gib(g.Physical), gib(g.Logical), f2(g.Ratio), gib(g.Inactive), gib(g.Snapshots)})
+		}
+	}
+	return append(tables, arr, aggr)
 }

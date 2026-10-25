@@ -39,6 +39,11 @@ type StorageSizing struct {
 	RawUsed int64
 	Plan    int64
 	IO      IOSummary
+	// Array is the data reduction measured on ONTAP, Arrays every ONTAP
+	// cluster added. NetAppDatastores counts datastores on NetApp LUNs.
+	Array            ArrayReduction
+	Arrays           []ArraySizing
+	NetAppDatastores int
 }
 
 type TypeUsage struct {
@@ -74,6 +79,8 @@ type DatastoreSizing struct {
 	Used        int64
 	Provisioned int64
 	IO          IOSummary
+	// Array is the ONTAP volume behind the datastore, when added.
+	Array *DatastoreArray
 }
 
 type WorkloadSizing struct {
@@ -295,6 +302,7 @@ func sizeStorage(sz *Sizing, in SizingInput, est *vc.Estate, groups []group) {
 	}
 	s.RawUsed = s.VMDisks + s.Snapshots + s.Other + s.Templates + s.RDM
 	s.Plan = int64(float64(s.RawUsed) * (1 + sz.Params.Growth/100) / (1 - sz.Params.FreeSpace/100))
+	sizeArrays(sz, in.Arrays)
 	for _, w := range wl {
 		sz.Workloads = append(sz.Workloads, *w)
 	}
@@ -479,6 +487,7 @@ func notes(sz *Sizing, inv *vc.Inventory, est *vc.Estate) []string {
 	if len(versions) > 1 {
 		add("Hosts run %d different ESXi builds. Check the compatibility guide for the new servers, adapters and the ESXi version you will deploy.", len(versions))
 	}
+	arrayNotes(sz, add)
 	if !st.IO.Available {
 		add("No storage performance data yet: datastore IOPS, throughput and latency are read every 5 minutes from the first sample on. Whether vCenter's history holds them depends on its statistics level.")
 	} else if !st.IO.Throughput {

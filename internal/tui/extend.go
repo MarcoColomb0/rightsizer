@@ -107,14 +107,14 @@ func (m Model) keyExtend(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		pw := m.pass.Value()
 		if m.extendNeedsPassword() && pw == "" {
-			m.err = "Enter the vCenter password to reopen the analysis."
+			m.err = "Enter the " + srcKind(m.src) + " password to reopen the analysis."
 			m.extFocus(xPass)
 			return m, nil
 		}
 		id, days, b := m.cur, m.ext.choices[m.ext.pick], m.b
 		label := "Extending the analysis"
 		if m.src.Phase == engine.Done {
-			label = "Reconnecting to vCenter"
+			label = "Reconnecting to " + srcKind(m.src)
 		}
 		return m.busyCmd(label, "extend", id, func() error { return b.Extend(id, days, pw) })
 	}
@@ -147,7 +147,7 @@ func (m Model) viewExtend() (string, []zone) {
 	st.add(m.field(false, "New end", t.bold.Render(end.Local().Format("Mon Jan 02 15:04"))+
 		t.faint.Render(fmt.Sprintf("  %s in total", plural(int(end.Sub(s.Started).Hours()/24+0.5), "day", "days")))))
 	if m.extendNeedsPassword() {
-		st.add("", m.field(m.ext.focus == xPass, "vCenter password", m.pass.View()))
+		st.add("", m.field(m.ext.focus == xPass, srcKind(m.src)+" password", m.pass.View()))
 		st.add(m.hint(s.Config.User + " on " + s.Config.Host))
 	}
 	st.add("")

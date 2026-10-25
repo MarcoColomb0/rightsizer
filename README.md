@@ -18,6 +18,7 @@ rightsizer watches your VMware vCenters for 24 hours to 14 days, compares what e
 - **Hardware refresh sizing:** node shapes and counts per cluster, network and FC ports, and raw storage with IOPS and throughput.
 - **Peak-aware:** how much less CPU a cluster needs than the sum of its VMs' peaks, with an hour-of-week heatmap.
 - **Results on day one:** 14 days of vCenter history are imported at the start, then each VM moves to 20-second data.
+- **NetApp ONTAP:** add the clusters behind your datastores to measure their data reduction, array Snapshot copies and controller load.
 - **Hidden waste:** orphaned disks, idle and powered-off VMs, old snapshots, NUMA-wide VMs and co-stop.
 - **Reports:** PDF reports and CSV data for every vCenter, or one for all of them.
 
@@ -80,13 +81,14 @@ Requirements, options and upgrades are in [docs/install.md](docs/install.md).
 
 1. Press `a` and enter a vCenter, a user with the built-in **Read-only** role, the duration and a sizing profile.
 2. Check the certificate fingerprint against vCenter and press `y`.
-3. Leave with `q`: collection continues in the background. Come back to follow it, open the findings and build reports with `p`.
+3. Optionally press `a` again and choose **NetApp ONTAP** to add the cluster behind the datastores, with a `readonly` user.
+4. Leave with `q`: collection continues in the background. Come back to follow it, open the findings and build reports with `p`.
 
 `?` lists the keys on every screen, and the mouse works too. See [docs/console.md](docs/console.md).
 
 ## Security
 
-rightsizer only reads: every vSphere call passes an allowlist of read methods before it leaves the process. vCenter certificates are pinned, stored credentials are encrypted with a key derived from the administrator password and held only in memory, and the appliance is a hardened, immutable [Flatcar](https://www.flatcar.org) host. Details are in [docs/security.md](docs/security.md); please report vulnerabilities through [GitHub security advisories](https://github.com/MarcoColomb0/rightsizer/security/advisories/new).
+rightsizer only reads: every vSphere call passes an allowlist of read methods before it leaves the process, and only `GET` requests reach ONTAP. vCenter certificates are pinned, stored credentials are encrypted with a key derived from the administrator password and held only in memory, and the appliance is a hardened, immutable [Flatcar](https://www.flatcar.org) host. Details are in [docs/security.md](docs/security.md); please report vulnerabilities through [GitHub security advisories](https://github.com/MarcoColomb0/rightsizer/security/advisories/new).
 
 ## Documentation
 

@@ -91,12 +91,21 @@ func (t theme) pulse(el time.Duration, w int) string {
 func (m Model) viewSetup() (string, []zone) {
 	t := m.th
 	var s stack
-	note := "The password is kept in memory only. A read-only vCenter role is enough."
-	if m.sum != nil && m.sum.Vault.Enabled {
-		note = "The password is stored encrypted with the administrator password. A read-only vCenter role is enough."
+	role := "A read-only vCenter role is enough."
+	if m.kind == 1 {
+		role = "A cluster user with the readonly role is enough; ONTAP 9.10 or later."
 	}
-	s.add(t.h1.Render("Add a vCenter source"), t.mute.Render(note), "")
-	s.add(m.field(m.focus == fHost, "vCenter", m.in[0].View()))
+	note := "The password is kept in memory only. " + role
+	if m.sum != nil && m.sum.Vault.Enabled {
+		note = "The password is stored encrypted with the administrator password. " + role
+	}
+	s.add(t.h1.Render("Add a source"), t.mute.Render(note), "")
+	s.add(m.field(m.focus == fKind, "Source", t.segmented(kinds, m.kind, m.focus == fKind)))
+	if m.kind == 1 {
+		s.add(m.hint("measures the data reduction behind the vCenters' datastores"))
+	}
+	s.add("")
+	s.add(m.field(m.focus == fHost, m.kindLabel(), m.in[0].View()))
 	s.add(m.field(m.focus == fUser, "Username", m.in[1].View()))
 	s.add(m.field(m.focus == fPass, "Password", m.in[2].View()))
 	s.add("")
@@ -109,11 +118,13 @@ func (m Model) viewSetup() (string, []zone) {
 	for i, p := range analysis.Profiles {
 		names[i] = p.Name
 	}
-	p := analysis.Profiles[m.profIdx]
-	s.add(m.field(m.focus == fProfile, "Profile", t.segmented(names, m.profIdx, m.focus == fProfile)))
-	s.add(m.hint(fmt.Sprintf("p%.0f · vCPU target %.0f%% · memory headroom +%.0f%%", p.Percentile, p.CPUTarget*100, (p.MemHeadroom-1)*100)))
-	s.add("")
-	s.add(m.field(m.focus == fClusters, "Clusters", m.in[3].View()))
+	if m.kind == 0 {
+		p := analysis.Profiles[m.profIdx]
+		s.add(m.field(m.focus == fProfile, "Profile", t.segmented(names, m.profIdx, m.focus == fProfile)))
+		s.add(m.hint(fmt.Sprintf("p%.0f · vCPU target %.0f%% · memory headroom +%.0f%%", p.Percentile, p.CPUTarget*100, (p.MemHeadroom-1)*100)))
+		s.add("")
+		s.add(m.field(m.focus == fClusters, "Clusters", m.in[3].View()))
+	}
 	s.add("")
 	focus := -1
 	if m.focus == fStart {
@@ -137,8 +148,12 @@ func (m Model) viewCert() (string, []zone) {
 	t := m.th
 	c := m.cert
 	var s stack
-	s.add(t.wrn.Bold(true).Render("⚠ The vCenter certificate is not signed by a trusted CA"),
-		t.mute.Width(80).Render("This is normal for self-signed VMCA certificates. Compare the fingerprint with the one shown in vCenter before you trust it."), "")
+	msg := "This is normal for self-signed VMCA certificates. Compare the fingerprint with the one shown in vCenter before you trust it."
+	if m.kind == 1 {
+		msg = "This is normal for ONTAP's self-signed certificate. Compare the fingerprint with security certificate show on the cluster before you trust it."
+	}
+	s.add(t.wrn.Bold(true).Render("⚠ The "+m.kindName()+" certificate is not signed by a trusted CA"),
+		t.mute.Width(80).Render(msg), "")
 	kv := func(k, v string) { s.add("  " + t.label.Render(k) + v) }
 	kv("Host", t.bold.Render(c.Host))
 	kv("Subject", c.Subject)
@@ -169,10 +184,10 @@ func (m Model) viewResume() (string, []zone) {
 	t := m.th
 	var s stack
 	s.add(t.wrn.Bold(true).Render("‖ Analysis paused"),
-		t.mute.Width(80).Render("vCenter rejected the saved session or the engine restarted. Enter the vCenter password to continue collecting."), "")
+		t.mute.Width(80).Render(fmt.Sprintf("%[1]s rejected the saved credentials or the engine restarted. Enter the %[1]s password to continue collecting.", srcKind(m.src))), "")
 	if src := m.src; src != nil {
 		kv := func(k, v string) { s.add("  " + t.label.Render(k) + v) }
-		kv("vCenter", t.bold.Render(src.Config.Host))
+		kv(srcKind(src), t.bold.Render(src.Config.Host))
 		kv("Username", src.Config.User)
 		kv("Window", fmt.Sprintf("%s → %s", src.Started.Format("Jan 02 15:04"), src.Ends.Format("Jan 02 15:04")))
 		if src.LastError != "" {

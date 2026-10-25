@@ -21,19 +21,20 @@ import (
 )
 
 type fake struct {
-	sum      engine.Summary
-	src      engine.Status
-	added    engine.Config
-	changed  [2]string
-	resumed  string
-	upgraded string
-	excl     []analysis.Exclusion
-	rebooted bool
-	sz       *analysis.Sizing
-	params   analysis.SizingParams
-	sized    []string
-	stopped  []string
-	extended string
+	sum       engine.Summary
+	src       engine.Status
+	added     engine.Config
+	changed   [2]string
+	resumed   string
+	upgraded  string
+	excl      []analysis.Exclusion
+	rebooted  bool
+	sz        *analysis.Sizing
+	params    analysis.SizingParams
+	sized     []string
+	stopped   []string
+	extended  string
+	diagnosed string
 }
 
 func (f *fake) Sizing(string) (*analysis.Sizing, error) {
@@ -52,6 +53,10 @@ func (f *fake) SetSizingParams(p analysis.SizingParams) error {
 	}
 	f.params = p
 	return nil
+}
+func (f *fake) Diagnose(id string, anonymise bool) (*report.Share, error) {
+	f.diagnosed = fmt.Sprintf("%s:%v", id, anonymise)
+	return &report.Share{}, nil
 }
 func (f *fake) PublishSizing(id string) (*report.Share, error) {
 	f.sized = append(f.sized, id)
@@ -197,6 +202,7 @@ var (
 	enter     = tea.KeyPressMsg{Code: tea.KeyEnter}
 	esc       = tea.KeyPressMsg{Code: tea.KeyEscape}
 	tab       = tea.KeyPressMsg{Code: tea.KeyTab}
+	shiftTab  = tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	down      = tea.KeyPressMsg{Code: tea.KeyDown}
 	right     = tea.KeyPressMsg{Code: tea.KeyRight}
 	backspace = tea.KeyPressMsg{Code: tea.KeyBackspace}
@@ -222,7 +228,7 @@ func TestHomeAndSource(t *testing.T) {
 	f := fakeDemo()
 	m := New(f, Options{Version: "v1.0.0", AdminSettings: true})
 	m = send(t, m, m.fetch()())
-	view(t, m, "vCenter sources", "vcsa01.corp.local", "vcsa02.corp.local", "needs password", "480 → 260", "Shared reports", "All sources", "? more")
+	view(t, m, "Sources", "vcsa01.corp.local", "vcsa02.corp.local", "needs password", "480 → 260", "Shared reports", "All sources", "? more")
 	view(t, send(t, m, typ("?")), "change password", "sizing PDF + data")
 
 	m = send(t, m, enter)
@@ -253,7 +259,7 @@ func TestAddSource(t *testing.T) {
 	f := fakeDemo()
 	m := New(f, Options{Version: "v1.0.0"})
 	m = send(t, m, m.fetch()(), typ("a"))
-	view(t, m, "Add a vCenter source", "stored encrypted", "14 days")
+	view(t, m, "Add a source", "vCenter │ NetApp ONTAP", "Clusters", "stored encrypted", "14 days")
 	for _, s := range []string{"vc3.corp.local", "\t", "ro@vsphere.local", "\t", "secret"} {
 		if s == "\t" {
 			m = send(t, m, tab)
@@ -270,6 +276,62 @@ func TestAddSource(t *testing.T) {
 	}
 	if m.scr != scrSource || m.cur != "abcd1234" {
 		t.Fatal("new source must open")
+	}
+}
+
+func TestAddONTAPSource(t *testing.T) {
+	f := fakeDemo()
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()(), typ("a"), shiftTab, right)
+	v := view(t, m, "ONTAP cluster", "readonly role", "ONTAP 9.10 or later", "cluster-mgmt.example.local")
+	if strings.Contains(v, "Clusters") || strings.Contains(v, "Profile") {
+		t.Fatal("an ONTAP cluster has no profile or cluster filter")
+	}
+	m = send(t, m, tab, typ("aff01.corp.local"), tab, typ("monitor"), tab, typ("secret"))
+	var fields []int
+	for m.focus != fStart {
+		m = send(t, m, tab)
+		fields = append(fields, m.focus)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("ONTAP form fields after the password: %v", fields)
+	}
+	m = send(t, m, enter)
+	if f.added.Kind != engine.KindONTAP || f.added.Host != "aff01.corp.local" || f.added.Clusters != nil {
+		t.Fatalf("ONTAP source not added: %+v", f.added)
+	}
+}
+
+func TestONTAPSourceScreen(t *testing.T) {
+	f := fakeDemo()
+	arr := engine.Status{ID: "cccc0003", Phase: engine.Running, Started: time.Now().Add(-time.Hour), Ends: time.Now().Add(23 * time.Hour),
+		About: "NetApp ONTAP 9.14.1 (cluster aff01)", History: "imported from Oct 11",
+		Config: engine.Config{Kind: engine.KindONTAP, Host: "aff01.corp.local", Profile: "balanced"},
+		Array: &analysis.ArraySizing{Name: "aff01", Models: "2 × AFF-A400", Version: "9.14.1", Size: 120 << 40, Physical: 14 << 40, Logical: 30 << 40, Ratio: 2.1,
+			Snapshots: 3 << 40, Matched: 5, Volumes: 5, MatchedData: 20 << 40, CPU: 58, CPUPeak: 70, CPUNode: "aff01-01",
+			Aggregates: []analysis.AggregateSizing{{Name: "aggr1", Node: "aff01-01", Type: "SSD", RAID: "raid_dp", Size: 60 << 40, Physical: 7 << 40, Logical: 15 << 40, Ratio: 2.1}}}}
+	f.sum.Sources = append(f.sum.Sources, arr)
+	m := New(f, Options{Version: "v1.0.0"})
+	m = send(t, m, m.fetch()())
+	view(t, m, "ONTAP", "aff01.corp.local", "Reduction 2.1:1", "Written 14.0 TB of 120.0 TB", "CPU 58%", "5 datastores")
+	m.sel = len(f.sum.Sources) - 1
+	f.src = arr
+	m = send(t, m, enter)
+	m = send(t, m, m.fetch()())
+	v := view(t, m, "NetApp ONTAP", "Data reduction", "2.1:1", "Snapshot copies", "Serves 5 datastores", "aggr1", "ONTAP archive: imported from Oct 11")
+	if strings.Contains(v, "1 Overview") {
+		t.Fatal("an ONTAP source has no tabs")
+	}
+	m = send(t, m, typ("p"))
+	view(t, m, "no report of its own")
+	if m.tab != tabClusters || len(f.sized) != 0 {
+		t.Fatal("tabs and reports stay closed for ONTAP sources")
+	}
+	m = send(t, m, typ("?"))
+	view(t, m, "d diagnostics", "D anonymised diagnostics")
+	m = send(t, m, typ("D"))
+	if f.diagnosed != "cccc0003:true" {
+		t.Fatalf("anonymised bundle not requested: %q", f.diagnosed)
 	}
 }
 

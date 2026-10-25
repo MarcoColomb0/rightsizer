@@ -45,6 +45,8 @@ type Backend interface {
 	SizingParams() (*analysis.SizingParams, error)
 	SetSizingParams(p analysis.SizingParams) error
 	PublishSizing(id string) (*report.Share, error)
+	// Diagnose builds and shares a diagnostic bundle for an ONTAP source.
+	Diagnose(id string, anonymise bool) (*report.Share, error)
 }
 
 // Local serves the console in-process. Host is set on the appliance.
@@ -122,6 +124,13 @@ func (l Local) SizingParams() (*analysis.SizingParams, error) {
 func (l Local) SetSizingParams(p analysis.SizingParams) error  { return l.E.SetSizingParams(p) }
 func (l Local) PublishSizing(id string) (*report.Share, error) { return l.E.PublishSizing(id) }
 
+// Diagnose stops before the socket client gives up.
+func (l Local) Diagnose(id string, anonymise bool) (*report.Share, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 85*time.Second)
+	defer cancel()
+	return l.E.Diagnose(ctx, id, anonymise)
+}
+
 func (l Local) Finish(id string) error                   { return l.E.Finish(id) }
 func (l Local) Remove(id string) error                   { return l.E.Remove(id) }
 func (l Local) Publish(id string) (*report.Share, error) { return l.E.Publish(id) }
@@ -131,6 +140,10 @@ func (l Local) ChangePassword(old, next string) error    { return l.E.ChangePass
 type addRequest struct {
 	Config   engine.Config
 	Password string
+}
+
+type diagnoseRequest struct {
+	Anonymise bool
 }
 
 type extendRequest struct {
@@ -242,6 +255,13 @@ func Serve(ctx context.Context, sock string, b Local) error {
 		var req idRequest
 		if decode(w, r, &req) {
 			sh, err := b.PublishSizing(req.ID)
+			reply(w, sh, err)
+		}
+	})
+	mux.HandleFunc("POST /sources/{id}/diagnose", func(w http.ResponseWriter, r *http.Request) {
+		var req diagnoseRequest
+		if decode(w, r, &req) {
+			sh, err := b.Diagnose(r.PathValue("id"), req.Anonymise)
 			reply(w, sh, err)
 		}
 	})
@@ -387,6 +407,12 @@ func (c *Client) SetSizingParams(p analysis.SizingParams) error {
 func (c *Client) PublishSizing(id string) (*report.Share, error) {
 	var s report.Share
 	return &s, c.call("POST", "/sizing/publish", idRequest{ID: id}, &s)
+}
+
+func (c *Client) Diagnose(id string, anonymise bool) (*report.Share, error) {
+	var sh report.Share
+	err := c.call("POST", "/sources/"+id+"/diagnose", diagnoseRequest{Anonymise: anonymise}, &sh)
+	return &sh, err
 }
 
 func (c *Client) RequestReboot() error {

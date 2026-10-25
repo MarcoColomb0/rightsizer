@@ -461,10 +461,10 @@ func (m Model) keyMap() keyMap {
 		return keyMap{short: []key.Binding{bind("q", "quit")}}
 	case scrHome:
 		if m.sources() == 0 {
-			return keyMap{short: []key.Binding{bind("a", "add vCenter"), bind("x", "exclusions"), bind("o", "sizing options"), bind("q", "quit")}}
+			return keyMap{short: []key.Binding{bind("a", "add source"), bind("x", "exclusions"), bind("o", "sizing options"), bind("q", "quit")}}
 		}
 		nav := []key.Binding{bind("↑/↓", "select"), bind("←/→", "page"), bind("enter", "open"), bind("q", "quit")}
-		act := []key.Binding{bind("a", "add vCenter"), bind("p", "combined PDF"), bind("z", "sizing PDF + data"), bind("o", "sizing options"), bind("x", "exclusions")}
+		act := []key.Binding{bind("a", "add source"), bind("p", "combined PDF"), bind("z", "sizing PDF + data"), bind("o", "sizing options"), bind("x", "exclusions")}
 		var sys []key.Binding
 		if m.sum != nil && len(m.sum.Shares) > 0 {
 			act = append(act, bind("s", "stop sharing"))
@@ -479,7 +479,7 @@ func (m Model) keyMap() keyMap {
 			sys = append(sys, bind("R", "restart"))
 		}
 		return keyMap{
-			short: []key.Binding{bind("↑/↓", "select"), bind("enter", "open"), bind("a", "add vCenter"), bind("p", "PDF"), bind("x", "exclusions"), more, bind("q", "quit")},
+			short: []key.Binding{bind("↑/↓", "select"), bind("enter", "open"), bind("a", "add source"), bind("p", "PDF"), bind("x", "exclusions"), more, bind("q", "quit")},
 			full:  [][]key.Binding{nav, act, append(sys, more)},
 		}
 	case scrSetup, scrExclude, scrSizing, scrExtend:
@@ -511,6 +511,17 @@ func (m Model) keyMap() keyMap {
 func (m Model) sourceKeys(more key.Binding) keyMap {
 	if m.srch.prompt {
 		return keyMap{short: []key.Binding{bind("enter", "search"), bind("esc", "cancel")}}
+	}
+	if m.isArray() {
+		act := []key.Binding{}
+		if m.src != nil && m.src.Phase == engine.NeedPassword {
+			act = append(act, bind("r", "resume"))
+		}
+		if m.src != nil && m.src.Phase != engine.Done {
+			act = append(act, bind("f", "finish now"))
+		}
+		act = append(act, bind("d", "diagnostics"), bind("D", "anonymised diagnostics"), bind("+", "collect for longer"), bind("x", "remove"))
+		return keyMap{short: append([]key.Binding{bind("esc", "back"), bind("↑/↓", "scroll")}, act...)}
 	}
 	nav := []key.Binding{bind("1-4", "tabs"), bind("tab", "next tab"), bind("esc", "back")}
 	view := []key.Binding{}

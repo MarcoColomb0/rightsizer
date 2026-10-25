@@ -12,6 +12,7 @@ require (
 	charm.land/wish/v2 v2.0.5
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/charmbracelet/x/term v0.2.2
 	github.com/vmware/govmomi v0.56.1
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
@@ -26,7 +27,6 @@ require (
 	github.com/charmbracelet/keygen v0.5.4 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 // indirect
 	github.com/charmbracelet/x/conpty v0.2.0 // indirect
-	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/charmbracelet/x/xpty v0.1.4 // indirect

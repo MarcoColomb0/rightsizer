@@ -167,6 +167,7 @@ func MergeSizing(ss []*Sizing) *Sizing {
 		o.Orphans += b.Orphans
 		o.RawUsed += b.RawUsed
 		o.Plan += b.Plan
+		mergeArrays(o, b)
 		covered += b.GuestCoverage * float64(b.VMDisks)
 		for _, u := range b.ByType {
 			k := u.Type + "|" + u.Protocol
@@ -219,6 +220,9 @@ func MergeSizing(ss []*Sizing) *Sizing {
 	slices.SortFunc(out.Storage.IO.Points, func(a, b IOPoint) int { return a.T.Compare(b.T) })
 	if out.Storage.VMDisks > 0 {
 		out.Storage.GuestCoverage = covered / float64(out.Storage.VMDisks)
+	}
+	if r := out.Storage.Array.Ratio(); r > 0 {
+		out.Storage.Array.PlanPhysical = int64(float64(out.Storage.Plan) / r)
 	}
 	for _, u := range types {
 		out.Storage.ByType = append(out.Storage.ByType, *u)

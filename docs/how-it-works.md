@@ -38,3 +38,14 @@ The sizing options (`o`) apply to every vCenter and are kept across upgrades: co
 - **Ports** per node: 2 × 25 GbE and 2 × 32G FC (or 2 Ethernet storage ports for NFS, iSCSI, NVMe/TCP and vSAN), plus 1 × 1 GbE out-of-band. A faster speed is suggested when today's adapters are faster or the measured peak per node would fill more than 40-50% of the pair.
 - **Raw used storage** = VM disks + snapshots + other VM files + templates + raw device mappings, as vSphere sees them, before any data reduction. Swap files (recreated at power-on) and orphaned disks are listed but not included. **Planned usable** = raw used × growth ÷ (1 − free space). Apply the data reduction you expect for each workload type to these figures.
 - **Storage performance** sums every host's 20-second datastore counters at each sample, so the percentile and peak IOPS, MB/s and latency describe all datastores at once.
+
+## NetApp ONTAP
+
+With an ONTAP cluster added, rightsizer reads its nodes, aggregates, volumes, LUNs and data interfaces every hour through the REST API, imports the performance archive (5-minute, 30-minute and 2-hour samples) back 14 days, then reads the last hour of 15-second samples every five minutes for the cluster, each node's CPU and every volume behind a datastore.
+
+- **Matching.** A VMFS datastore belongs to the volume holding the LUN whose NAA identifier (`naa.600a0980` and the LUN serial number) is its extent. An NFS datastore belongs to the volume with the longest junction path that holds its export, on an SVM owning the export address. Local, vSAN and vVols datastores are not matched.
+- **Data reduction** = the matched volumes' active data before savings ÷ the space it occupies after volume deduplication and compression, then aggregate compaction. Snapshot copies are left out, and a volume holding several datastores counts once. **Planned physical** = planned usable ÷ data reduction.
+- **Array Snapshot copies**, **data in other volumes** (file shares, other hosts) and **inactive data** are listed separately; none is in raw used capacity.
+- **Controllers.** The CPU percentile is that of the busiest node: with an HA partner down, one node carries both, so keep new controllers below 50% each.
+
+The reduction a new array achieves depends on its platform and on the data, so treat the measured figure as a reference for an ONTAP successor and as an upper bound for other vendors.

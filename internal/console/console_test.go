@@ -30,7 +30,7 @@ func TestRender(t *testing.T) {
 		Vault:   engine.VaultState{Enabled: true, Locked: true},
 		Reboot:  []string{"Flatcar OS update 4757.3.0 installed"},
 	}})
-	for _, want := range []string{"rightsizer appliance", "v1.0.0", "SHA256:abc", "2 vCenter sources", "Log in over SSH to resume", "vApp Options", "read-only",
+	for _, want := range []string{"rightsizer appliance", "v1.0.0", "SHA256:abc", "2 sources", "Log in over SSH to resume", "vApp Options", "read-only",
 		"Restart", "required: Flatcar OS update 4757.3.0 installed", "Flatcar Container Linux 4081.3.10 · lts updates"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in\n%s", want, out)

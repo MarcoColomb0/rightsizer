@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,10 +60,17 @@ func TestWriteSizing(t *testing.T) {
 		}
 		files[f.Name] = rows
 	}
-	for _, n := range []string{"vms.csv", "hosts.csv", "adapters.csv", "vmkernel.csv", "datastores.csv", "clusters.csv", "node-options.csv", "needs.csv", "workloads.csv", "storage-summary.csv"} {
+	for _, n := range []string{"vms.csv", "hosts.csv", "adapters.csv", "vmkernel.csv", "datastores.csv", "clusters.csv", "node-options.csv", "needs.csv", "workloads.csv", "storage-summary.csv", "ontap-clusters.csv", "ontap-aggregates.csv"} {
 		if len(files[n]) < 2 {
 			t.Fatalf("%s has no rows", n)
 		}
+	}
+	ds := files["datastores.csv"]
+	if col := slices.Index(ds[0], "ontap_volume"); col < 0 || ds[1][col] == "" || len(ds[1]) != len(ds[0]) {
+		t.Fatalf("datastores.csv carries the ONTAP volume behind each datastore: %v / %v", ds[0], ds[1])
+	}
+	if len(sz.Storage.Arrays) != 1 || sz.Storage.Array.PlanPhysical == 0 {
+		t.Fatalf("demo sizing has no ONTAP measurement: %+v", sz.Storage.Array)
 	}
 	if len(files["vms.csv"]) != len(sz.VMs)+1 {
 		t.Fatalf("vms.csv: %d rows for %d VMs", len(files["vms.csv"]), len(sz.VMs))

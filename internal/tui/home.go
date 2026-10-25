@@ -44,18 +44,19 @@ func (m Model) viewHome() (string, []zone) {
 	}
 	if len(m.sum.Sources) == 0 {
 		var s stack
-		s.add(t.logo(), "", t.h1.Render("No vCenter sources yet"),
-			t.mute.Render("Add one to start collecting. A vCenter account with the Read-only role is enough."), "")
-		btn, bz := t.buttons(0, action{"Add vCenter", "a"})
+		s.add(t.logo(), "", t.h1.Render("No sources yet"),
+			t.mute.Render("Add a vCenter to start collecting. A vCenter account with the Read-only role is enough."),
+			t.mute.Render("Add the NetApp ONTAP clusters behind its datastores to measure data reduction and array load."), "")
+		btn, bz := t.buttons(0, action{"Add source", "a"})
 		s.addZoned(btn, bz, 0)
-		s.add("", t.faint.Render("rightsizer never changes vCenter: it only reads inventory and performance data."))
+		s.add("", t.faint.Render("rightsizer never changes vCenter or ONTAP: it only reads inventory and performance data."))
 		box := lipgloss.Place(m.bodyW(), m.bodyH(), lipgloss.Center, lipgloss.Center, s.String())
 		x := (m.bodyW() - lipgloss.Width(s.String())) / 2
 		y := (m.bodyH() - lipgloss.Height(s.String())) / 2
 		return box, shift(s.zones, x, y)
 	}
 	var s stack
-	s.add(t.h1.Render("vCenter sources") + "  " + t.mute.Render(m.sourceCounts()))
+	s.add(t.h1.Render("Sources") + "  " + t.mute.Render(m.sourceCounts()))
 	s.add("")
 	start, end := m.pager.GetSliceBounds(len(m.sum.Sources))
 	for i := start; i < end; i++ {
@@ -140,6 +141,9 @@ func (m Model) sourceCard(s engine.Status, selected bool) string {
 	w := m.bodyW()
 	inner := w - 4
 	name := t.bold.Render(clip(s.Config.Host, inner-20))
+	if s.Config.IsONTAP() {
+		name = t.pill("ONTAP", t.info) + " " + t.bold.Render(clip(s.Config.Host, inner-28))
+	}
 	pill := m.phasePill(s.Phase)
 	top := name + strings.Repeat(" ", max(inner-lipgloss.Width(name)-lipgloss.Width(pill), 1)) + pill
 
@@ -149,7 +153,9 @@ func (m Model) sourceCard(s engine.Status, selected bool) string {
 	mid := bar + "  " + t.mute.Render(text)
 
 	var stats []string
-	if tt := s.Totals; tt != nil {
+	if s.Config.IsONTAP() {
+		stats = m.arrayStats(s)
+	} else if tt := s.Totals; tt != nil {
 		stats = append(stats,
 			t.mute.Render("vCPU ")+t.bold.Render(fmt.Sprintf("%d → %d", tt.VCPU, tt.RecVCPU))+" "+m.deltaText(tt.VCPU, tt.RecVCPU),
 			t.mute.Render("Memory ")+t.bold.Render(fmt.Sprintf("%s → %s", analysis.GiB(tt.MemMB), analysis.GiB(tt.RecMemMB)))+" "+m.deltaText(tt.MemMB, tt.RecMemMB),
@@ -157,7 +163,9 @@ func (m Model) sourceCard(s engine.Status, selected bool) string {
 	} else {
 		stats = append(stats, t.faint.Render("waiting for the first samples"))
 	}
-	stats = append(stats, findingsBadge(t, s.Findings))
+	if !s.Config.IsONTAP() {
+		stats = append(stats, findingsBadge(t, s.Findings))
+	}
 	bottom := strings.Join(stats, t.faint.Render("  ·  "))
 	return t.panel(w, selected).Render(top + "\n" + mid + "\n" + bottom)
 }
@@ -240,6 +248,9 @@ func (m Model) sharesBox(shares []report.Share, sources []engine.Status) string 
 		if id, ok := strings.CutPrefix(sh.Source, "sizing:"); ok {
 			name = "Sizing · " + names[id]
 		}
+		if id, ok := strings.CutPrefix(sh.Source, "diag:"); ok {
+			name = "Diagnostics · " + names[id]
+		}
 		fmt.Fprintf(&b, "\n%s  %s\n%s", t.bold.Render(name),
 			t.mute.Render(fmt.Sprintf("expires %s · %d downloads", sh.Expires.Format("Jan 02 15:04"), sh.Downloads)),
 			t.link(sh.URL, sh.URL))
@@ -255,7 +266,7 @@ func (m Model) shares(id string) []report.Share {
 	var out []report.Share
 	if m.sum != nil {
 		for _, sh := range m.sum.Shares {
-			if sh.Source == id || sh.Source == "sizing:"+id {
+			if sh.Source == id || sh.Source == "sizing:"+id || sh.Source == "diag:"+id {
 				out = append(out, sh)
 			}
 		}

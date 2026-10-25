@@ -67,7 +67,7 @@ func (s *sizingDoc) cover() {
 		{"New nodes", fmt.Sprint(nt.Nodes), fmt.Sprintf("today %d hosts", t.Hosts), cMuted},
 		{"Physical cores", fmt.Sprintf("%d → %d", t.Cores, nt.Cores), pct(t.Cores, nt.Cores), change(t.Cores, nt.Cores)},
 		{"RAM", fmt.Sprintf("%s → %s", tb(t.MemB), analysis.GBLabel(nt.MemGB)), pct(int(t.MemB>>30), nt.MemGB), change(int(t.MemB>>30), nt.MemGB)},
-		{"Raw used storage", tb(sz.Storage.RawUsed), "plan " + tb(sz.Storage.Plan) + " usable", cMuted},
+		{"Raw used storage", tb(sz.Storage.RawUsed), planLine(sz.Storage), cMuted},
 	})
 
 	s.h2("Recommended nodes")
@@ -105,8 +105,12 @@ func (s *sizingDoc) cover() {
 		}
 		perf += "."
 	}
-	s.para(fmt.Sprintf("The VMs store %s of data (raw used, before any data reduction on the new storage); with growth and %g%% free space, plan %s of usable capacity before data reduction. %s",
-		tb(st.RawUsed), p.FreeSpace, tb(st.Plan), perf))
+	measured := ""
+	if r := st.Array; r.PlanPhysical > 0 {
+		measured = fmt.Sprintf(" At the %s data reduction measured on ONTAP for %d datastore(s), that is about %s of physical capacity.", reduction(r.Ratio()), r.Datastores, tb(r.PlanPhysical))
+	}
+	s.para(fmt.Sprintf("The VMs store %s of data (raw used, before any data reduction on the new storage); with growth and %g%% free space, plan %s of usable capacity before data reduction.%s %s",
+		tb(st.RawUsed), p.FreeSpace, tb(st.Plan), measured, perf))
 	if sz.Preview || !sz.Final {
 		msg := "Interim sizing: the analysis is still collecting data. Percentiles settle as the window completes."
 		if sz.Preview {
@@ -114,6 +118,13 @@ func (s *sizingDoc) cover() {
 		}
 		s.callout(msg, cWarn, cWarnTint)
 	}
+}
+
+func planLine(st analysis.StorageSizing) string {
+	if st.Array.PlanPhysical > 0 {
+		return "plan " + tb(st.Plan) + " · " + tb(st.Array.PlanPhysical) + " at " + reduction(st.Array.Ratio())
+	}
+	return "plan " + tb(st.Plan) + " usable"
 }
 
 // Num formats a count with thousands separators.
@@ -365,6 +376,7 @@ func (s *sizingDoc) storage() {
 		s.note("Workloads follow the groups set in the sizing options, otherwise the guest operating system. Raw used includes raw device mappings; swap files are left out.")
 	}
 
+	s.arrays()
 	s.storagePerf()
 	s.datastoreTable()
 }
@@ -452,7 +464,10 @@ func (s *sizingDoc) datastoreTable() {
 	rows := [][]string{}
 	for _, d := range ds {
 		backing := d.Remote
-		if len(d.LUNs) > 0 {
+		switch {
+		case d.Array != nil:
+			backing = arrayBacking(d.Array)
+		case len(d.LUNs) > 0:
 			l := d.LUNs[0]
 			backing = strings.TrimSpace(fmt.Sprintf("%s %s", l.Vendor, l.Model))
 			if l.Transport != "" {
@@ -479,7 +494,7 @@ func (s *sizingDoc) datastoreTable() {
 	}
 	pc := fmt.Sprintf("p%.0f", s.sz.Percentile)
 	s.table([]col{{"Datastore", 32, "L"}, {"Type", 18, "L"}, {"Backing", 44, "L"}, {"Capacity", 17, "R"}, {"Used", 16, "R"}, {"Prov.", 16, "R"}, {"IOPS " + pc, 15, "R"}, {"MB/s", 11, "R"}, {"ms", 10, "R"}}, rows)
-	s.note("Backing is the storage device as reported to vSphere, or the NFS export. Used is capacity minus free space as the datastore reports it: on NFS it may already reflect the current array's data reduction.")
+	s.note("Backing is the ONTAP volume and its data reduction when the cluster was added, otherwise the storage device as reported to vSphere or the NFS export. Used is capacity minus free space as the datastore reports it: on NFS it may already reflect the current array's data reduction.")
 }
 
 func (s *sizingDoc) current() {

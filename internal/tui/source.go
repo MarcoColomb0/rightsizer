@@ -74,12 +74,19 @@ func (m Model) sourceHead() (string, []zone) {
 	case engine.Done:
 		sub = append(sub, "finished "+s.Finished.Format("Mon Jan 02 15:04"))
 	}
-	sub = append(sub, report.Num(float64(s.Polls))+" polls", s.Config.Profile+" profile")
+	sub = append(sub, report.Num(float64(s.Polls))+" polls")
+	if !s.Config.IsONTAP() {
+		sub = append(sub, s.Config.Profile+" profile")
+	}
 	st.add(t.mute.Render(strings.Join(sub, " · ")))
 	if s.LastError != "" {
 		st.add(t.wrn.Render("⚠ " + clip(s.LastError, bw-2)))
 	}
 	st.add("")
+	if s.Config.IsONTAP() {
+		st.add(t.fill(" ONTAP ") + "  " + t.mute.Render(s.About) + "\n" + t.faint.Render(strings.Repeat("─", bw)))
+		return st.String(), st.zones
+	}
 	tabs, tz := m.tabBar()
 	st.addZoned(tabs, tz, 0)
 	return st.String(), st.zones
@@ -135,6 +142,10 @@ func (m Model) scrollbar() string {
 func (m *Model) syncViewport() {
 	if m.src == nil {
 		m.vp.SetContent("")
+		return
+	}
+	if m.src.Config.IsONTAP() {
+		m.vp.SetContent(m.arrayView())
 		return
 	}
 	switch m.tab {

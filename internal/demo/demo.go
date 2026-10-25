@@ -61,13 +61,14 @@ func New(opt Options) *Backend {
 	b.add(sample.Config{Seed: 11, VCenter: "vcsa01.corp.local", About: "VMware vCenter Server 8.0.3 build-24322831",
 		Clusters: []string{"prod-cl01", "prod-cl02", "dmz-cl01"}, VMs: 25, Load: 1, Days: 5},
 		engine.Running, 14*24*time.Hour, 5*24*time.Hour+6*time.Hour, "balanced")
+	b.addArray(b.srcs[0], 14*24*time.Hour, 5*24*time.Hour+5*time.Hour)
 	b.add(sample.Config{Seed: 23, VCenter: "vcsa02.lab.local", About: "VMware vCenter Server 8.0.2 build-22617221",
-		Clusters: []string{"lab-cl01"}, VMs: 18, Load: 0.6, Days: 2},
+		Clusters: []string{"lab-cl01"}, VMs: 18, Load: 0.6, Days: 2, NoArray: true},
 		engine.NeedPassword, 7*24*time.Hour, 2*24*time.Hour+3*time.Hour, "aggressive")
 	b.add(sample.Config{Seed: 37, VCenter: "vcsa-dr.corp.local", About: "VMware vCenter Server 8.0.3 build-24322831",
-		Clusters: []string{"dr-cl01", "dr-cl02"}, VMs: 20, Load: 0.4, Days: 14},
+		Clusters: []string{"dr-cl01", "dr-cl02"}, VMs: 20, Load: 0.4, Days: 14, NoArray: true},
 		engine.Done, 14*24*time.Hour, 14*24*time.Hour, "conservative")
-	dr := b.srcs[2]
+	dr := b.srcs[3]
 	b.share(dr.st.ID, fmt.Sprintf("rightsizer-final-%s.pdf", dr.st.Finished.Format("20060102-150405")), false)
 	if opt.Appliance {
 		b.reboot = []string{"Appliance updated to v0.8.1: kernel settings changed", "Flatcar Container Linux 4081.3.11 is installed"}
@@ -107,8 +108,29 @@ func (b *Backend) add(c sample.Config, phase engine.Phase, planned, elapsed time
 	return s
 }
 
+// addArray shows the ONTAP cluster behind a vCenter's datastores as a
+// source of its own.
+func (b *Backend) addArray(vcs *source, planned, elapsed time.Duration) *source {
+	now := time.Now()
+	a := vcs.data.Arrays[0]
+	vols, n := analysis.MatchedVolumes(a.Inv, []*vc.Estate{vcs.data.Estate})
+	sum := analysis.SummarizeArray(a, vols, n, 95)
+	s := &source{created: now}
+	s.st = engine.Status{
+		ID: newID(), Phase: engine.Running, Array: &sum, About: a.About,
+		Config:  engine.Config{Kind: engine.KindONTAP, Host: a.Host, User: "monitor", Duration: planned, Profile: "balanced"},
+		Started: now.Add(-elapsed), Ends: now.Add(planned - elapsed),
+		History: "imported from " + now.Add(-elapsed-14*24*time.Hour).Format("Jan 02"),
+	}
+	b.srcs = append(b.srcs, s)
+	return s
+}
+
 // analyze recomputes a source's results with the current exclusions.
 func (b *Backend) analyze(s *source) {
+	if s.st.Config.IsONTAP() {
+		return
+	}
 	in := s.data.Input
 	in.Exclusions = nil
 	for _, x := range b.excl {
@@ -183,6 +205,9 @@ func (b *Backend) Source(id string) (*engine.Status, error) {
 		return nil, err
 	}
 	st := s.st
+	if s.result == nil {
+		return &st, nil
+	}
 	r := *s.result
 	r.VMs = nil
 	r.Clusters = slices.Clone(r.Clusters)
@@ -225,6 +250,13 @@ func (b *Backend) Add(cfg engine.Config, password string) (string, error) {
 		if s.st.Config.Host == cfg.Host && s.st.Phase != engine.Done {
 			return "", fmt.Errorf("%s is already being analysed", cfg.Host)
 		}
+	}
+	if cfg.IsONTAP() {
+		s := b.addArray(b.srcs[0], cfg.Duration, 0)
+		s.st.Config = cfg
+		s.st.Config.Profile = "balanced"
+		s.st.Array.Name, s.st.Array.Host = strings.Split(cfg.Host, ".")[0], cfg.Host
+		return s.st.ID, nil
 	}
 	clusters := cfg.Clusters
 	if len(clusters) == 0 {
@@ -335,6 +367,8 @@ func (b *Backend) Publish(id string) (*report.Share, error) {
 		key = "all"
 	} else if s, err := b.find(id); err != nil {
 		return nil, err
+	} else if s.st.Config.IsONTAP() {
+		return nil, errors.New("ONTAP clusters have no report of their own")
 	} else if s.st.Phase == engine.Done {
 		kind = "final"
 	}
@@ -350,6 +384,24 @@ func (b *Backend) PublishSizing(id string) (*report.Share, error) {
 		key = "sizing:" + id
 	}
 	return b.share(key, fmt.Sprintf("rightsizer-sizing-%s.pdf", time.Now().Format("20060102-150405")), true), nil
+}
+
+func (b *Backend) Diagnose(id string, anonymise bool) (*report.Share, error) {
+	b.wait()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, err := b.find(id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.st.Config.IsONTAP() {
+		return nil, errors.New("diagnostic bundles are available for ONTAP sources")
+	}
+	kind := "diag"
+	if anonymise {
+		kind = "diag-anonymised"
+	}
+	return b.share("diag:"+id, fmt.Sprintf("rightsizer-%s-%s.zip", kind, time.Now().Format("20060102-150405")), false), nil
 }
 
 func (b *Backend) StopShare(id string) error {
@@ -427,7 +479,10 @@ func (b *Backend) Sizing(id string) (*analysis.Sizing, error) {
 	defer b.mu.Unlock()
 	var out []*analysis.Sizing
 	for _, s := range b.srcs {
-		if id == "" || s.st.ID == id {
+		if s.st.ID == id && s.st.Config.IsONTAP() {
+			return nil, errors.New("ONTAP clusters have no sizing of their own: their data reduction and load are in the sizing of the vCenters whose datastores they serve")
+		}
+		if (id == "" || s.st.ID == id) && !s.st.Config.IsONTAP() {
 			out = append(out, sample.Sizing(s.data, s.result, b.params))
 		}
 	}

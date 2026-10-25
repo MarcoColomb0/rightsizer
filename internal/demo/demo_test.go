@@ -13,7 +13,7 @@ var _ ipc.Backend = (*Backend)(nil)
 func TestDemoBackend(t *testing.T) {
 	b := New(Options{Appliance: true})
 	sum, err := b.Summary()
-	if err != nil || len(sum.Sources) != 3 || len(sum.Reboot) == 0 || len(sum.Shares) != 1 {
+	if err != nil || len(sum.Sources) != 4 || len(sum.Reboot) == 0 || len(sum.Shares) != 1 {
 		t.Fatalf("summary %+v %v", sum, err)
 	}
 	run := sum.Sources[0]
@@ -25,8 +25,26 @@ func TestDemoBackend(t *testing.T) {
 		t.Fatalf("source %+v %v", st, err)
 	}
 	sz, err := b.Sizing(run.ID)
-	if err != nil || len(sz.Clusters) == 0 || sz.Storage.RawUsed == 0 {
+	if err != nil || len(sz.Clusters) == 0 || sz.Storage.RawUsed == 0 || sz.Storage.Array.Datastores == 0 {
 		t.Fatalf("sizing %+v %v", sz, err)
+	}
+	arr := sum.Sources[1]
+	if !arr.Config.IsONTAP() || arr.Array == nil || arr.Array.Matched != 5 || arr.Array.Ratio < 1.5 {
+		t.Fatalf("ONTAP source %+v", arr)
+	}
+	if st, err := b.Source(arr.ID); err != nil || st.Array == nil || len(st.Array.Aggregates) != 2 {
+		t.Fatalf("ONTAP status %+v %v", st, err)
+	}
+	if _, err := b.Sizing(arr.ID); err == nil {
+		t.Fatal("an ONTAP source has no sizing of its own")
+	}
+	if all, err := b.Sizing(""); err != nil || len(all.Storage.Arrays) != 1 || all.Storage.NetAppDatastores == 0 {
+		t.Fatalf("combined sizing %+v %v", all.Storage.Array, err)
+	}
+	if id, err := b.Add(engine.Config{Kind: engine.KindONTAP, Host: "aff02.corp.local", Duration: 7 * 24 * 3600e9}, "secret"); err != nil {
+		t.Fatal(err)
+	} else if st, _ := b.Source(id); st.Array == nil || st.Config.Host != "aff02.corp.local" {
+		t.Fatalf("new ONTAP source %+v", st)
 	}
 	before := st.Findings
 	f := st.Result.Findings[0]

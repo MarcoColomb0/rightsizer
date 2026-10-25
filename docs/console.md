@@ -2,11 +2,33 @@
 
 ## Add a vCenter
 
-1. Press `a`. Enter the vCenter address, a user with the built-in **Read-only** role, the duration (24 hours to 14 days) and a sizing profile. To also find orphaned disks, give that role the **Datastore > Browse datastore** privilege; everything else works without it.
+1. Press `a`, keep **vCenter** as the source and enter the vCenter address, a user with the built-in **Read-only** role, the duration (24 hours to 14 days) and a sizing profile. To also find orphaned disks, give that role the **Datastore > Browse datastore** privilege; everything else works without it.
 2. Compare the certificate fingerprint with the one shown in vCenter, then press `y`.
 3. Repeat for other vCenters, then leave with `q`. Collection continues in the background.
 
 First results appear within minutes: rightsizer imports the last 14 days of history stored in vCenter. Results marked **preview** come from those stored averages (5-minute to 2-hour samples), which smooth out short peaks, so treat them as a first look. Each VM switches to 20-second data once it has 24 hours of it.
+
+## Add a NetApp ONTAP cluster
+
+Add the ONTAP clusters behind your datastores to measure the data reduction they get today, the Snapshot copies vSphere does not see and how busy the controllers are. ONTAP 9.10 or later is supported.
+
+1. Press `a`, choose **NetApp ONTAP** with `←`/`→` on the first row, and enter the cluster management address, a cluster user with the built-in `readonly` role and the duration.
+2. Compare the certificate fingerprint with `security certificate show` on the cluster, then press `y`.
+
+Datastores are matched to the cluster automatically, from every vCenter: VMFS datastores by LUN serial number and NFS datastores by export path and data interface. A cluster serving several vCenters is added once. Its card shows the data reduction, the space written and the controllers' CPU; the reduction appears in the storage section of each vCenter's sizing, its PDF and its CSV data. A cluster has no report of its own.
+
+## Diagnostics
+
+When an ONTAP cluster does not match its datastores or a figure looks wrong, open the cluster and press `d` for a diagnostic bundle, or `D` for an anonymised one. rightsizer reads the cluster again, checks every assumption the sizing makes, explains for each datastore of each vCenter what it matched or why not, and shares a zip on a download link like a report. Start with `checks.txt`; attach the zip to a GitHub issue. Passwords are never included, and the anonymised bundle replaces names, addresses, serial numbers and paths with tokens that keep their relations.
+
+Before deploying anything, the same checks run from any machine with Docker; the bundle is written to stdout:
+
+```bash
+docker run --rm -i -e RIGHTSIZER_PASSWORD ghcr.io/marcocolomb0/rightsizer:<version> \
+  diagnose-ontap -fingerprint <SHA-256> cluster.example.local monitor > diag.zip
+```
+
+Without `-fingerprint` it prints the certificate's fingerprint to compare with `security certificate show`. Pre-releases keep debug logs in memory for these bundles; set `RIGHTSIZER_DEBUG=1` to also write them to the engine's log.
 
 ## Keys
 
@@ -15,7 +37,7 @@ First results appear within minutes: rightsizer imports the last 14 days of hist
 | Home | |
 | --- | --- |
 | `enter` | open a vCenter |
-| `a` | add a vCenter |
+| `a` | add a vCenter or an ONTAP cluster |
 | `p` | combined PDF report of every vCenter |
 | `z` | combined hardware refresh sizing PDF and CSV data |
 | `o` | sizing options |

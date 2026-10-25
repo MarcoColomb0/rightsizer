@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/ontap"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 	"github.com/MarcoColomb0/rightsizer/internal/vault"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
@@ -48,7 +49,15 @@ var (
 	historyBack    = 14 * 24 * time.Hour
 )
 
+// Kinds of source. A vCenter is collected and analysed; an ONTAP cluster
+// is collected and joined to the datastores it serves in sizing.
+const (
+	KindVCenter = ""
+	KindONTAP   = "ontap"
+)
+
 type Config struct {
+	Kind        string
 	Host        string
 	User        string
 	Fingerprint string
@@ -57,9 +66,17 @@ type Config struct {
 	Clusters    []string
 }
 
+// IsONTAP reports an ONTAP cluster source.
+func (c Config) IsONTAP() bool { return c.Kind == KindONTAP }
+
 // stateVersion is bumped whenever state changes incompatibly, so an older
-// release never overwrites data written by a newer one.
-const stateVersion = 1
+// release never overwrites data written by a newer one. vCenter sources are
+// still written as version 1, which earlier releases read; ONTAP sources as
+// version 2, which they set aside instead of mistaking for a vCenter.
+const (
+	stateVersion  = 2
+	vcenterFormat = 1
+)
 
 type state struct {
 	Version   int
@@ -83,6 +100,12 @@ type state struct {
 	WasteScanned time.Time
 	Estate       *vc.Estate
 	EstateTaken  time.Time
+
+	// ONTAP sources: the cluster's records, 15-second performance from the
+	// start and the archive imported at the start.
+	Array        *ontap.Inventory
+	ArrayRT      *analysis.ArrayStore
+	ArrayHistory *analysis.ArrayStore
 }
 
 type Status struct {
@@ -103,6 +126,8 @@ type Status struct {
 	History    string
 	Result     *analysis.Result
 	ReportFile string
+	// Array summarises an ONTAP source.
+	Array *analysis.ArraySizing
 }
 
 type VaultState struct {
@@ -176,6 +201,9 @@ func New(dir string, web *report.Server, v *vault.Vault) (*Engine, error) {
 		}
 		s.refreshResult()
 		e.sources[s.id] = s
+	}
+	for _, s := range e.list() {
+		s.refreshArray()
 	}
 	return e, nil
 }
@@ -296,6 +324,15 @@ func (e *Engine) Add(ctx context.Context, cfg Config, password string) (string, 
 	if len(existing) >= maxSources {
 		return "", fmt.Errorf("at most %d sources", maxSources)
 	}
+	if cfg.Kind != KindVCenter && cfg.Kind != KindONTAP {
+		return "", fmt.Errorf("unknown source kind %q", cfg.Kind)
+	}
+	if cfg.IsONTAP() {
+		cfg.Clusters = nil
+		if cfg.Profile == "" {
+			cfg.Profile = "balanced"
+		}
+	}
 	id := newID()
 	s := &Source{id: id, dir: filepath.Join(e.sourcesDir(), id), eng: e, st: state{Config: cfg}}
 	cl, err := s.connect(ctx, password)
@@ -316,7 +353,7 @@ func (e *Engine) Add(ctx context.Context, cfg Config, password string) (string, 
 	e.sources[id] = s
 	e.mu.Unlock()
 	s.begin(cl)
-	slog.Info("source added", "source", id, "vcenter", cfg.Host)
+	slog.Info("source added", "source", id, "host", cfg.Host, "kind", kindName(cfg.Kind))
 	return id, nil
 }
 
@@ -370,7 +407,7 @@ func (e *Engine) Extend(ctx context.Context, id string, extra time.Duration, pas
 
 // reconnect logs in to a source's vCenter with password, or the stored one
 // when it is empty, and keeps a typed password for next time.
-func (e *Engine) reconnect(ctx context.Context, s *Source, password string) (*vc.Client, error) {
+func (e *Engine) reconnect(ctx context.Context, s *Source, password string) (session, error) {
 	stored := password == ""
 	if stored {
 		if e.vault == nil {
@@ -444,7 +481,7 @@ func (e *Engine) Remove(id string) error {
 	}
 	s.stop()
 	for _, sh := range e.web.Shares() {
-		if sh.Source == id || sh.Source == sizingShare(id) {
+		if sh.Source == id || sh.Source == sizingShare(id) || sh.Source == diagShare(id) {
 			e.web.Stop(sh.ID)
 		}
 	}
@@ -457,6 +494,16 @@ func (e *Engine) Remove(id string) error {
 	slog.Info("source removed", "source", id)
 	return os.RemoveAll(s.dir)
 }
+
+func kindName(k string) string {
+	if k == KindONTAP {
+		return "ONTAP"
+	}
+	return "vCenter"
+}
+
+// errArrayReport explains where an ONTAP cluster's figures are reported.
+var errArrayReport = errors.New("ONTAP clusters have no report of their own: their data reduction and load are in the sizing of the vCenters whose datastores they serve")
 
 // Publish renders a source's current results, or all sources combined when id
 // is empty, and shares the PDF on the download server.
@@ -479,6 +526,9 @@ func (e *Engine) Publish(id string) (*report.Share, error) {
 		s, err := e.get(id)
 		if err != nil {
 			return nil, err
+		}
+		if s.status(false).Config.IsONTAP() {
+			return nil, errArrayReport
 		}
 		res = s.currentResult()
 		dir = filepath.Join(s.dir, "reports")

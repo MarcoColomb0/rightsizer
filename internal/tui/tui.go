@@ -52,8 +52,13 @@ const (
 	fProfile
 	fClusters
 	fStart
+	// fKind is shown first; focus moves in setupOrder.
+	fKind
 	fCount
 )
+
+// Source kinds offered in the add form.
+var kinds = []string{"vCenter", "NetApp ONTAP"}
 
 // Source screen tabs.
 const (
@@ -127,6 +132,7 @@ type Model struct {
 
 	in      [4]textinput.Model
 	focus   int
+	kind    int
 	durIdx  int
 	profIdx int
 	cert    *vc.CertInfo
@@ -366,7 +372,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.restartPollTimer()
 	case probeMsg:
 		if msg.err != nil {
-			m.scr, m.err = scrSetup, "Cannot reach vCenter: "+msg.err.Error()
+			m.scr, m.err = scrSetup, "Cannot reach "+m.kindName()+": "+msg.err.Error()
 			return m, nil
 		}
 		m.cert = msg.c
@@ -602,6 +608,8 @@ func (m Model) done(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.scr, m.note = scrHome, "Administrator password changed."
 	case "publish":
 		m.scr, m.note = m.back, "Report published. The download link is in the shared reports panel."
+	case "diagnose":
+		m.scr, m.note = m.back, "Diagnostic bundle ready: download it from the link below and attach it to a GitHub issue. Start with checks.txt."
 	case "exclude":
 		m.scr, m.note = m.ex.ret, "Exclusion saved. Reports are updated."
 		return m, tea.Batch(stop, m.fetch(), m.fetchExclusions())
@@ -678,6 +686,7 @@ func (m Model) keyHome(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.openSource(m.sel)
 	case "a":
 		m.scr, m.err = scrSetup, ""
+		m.setKind(m.kind)
 		m.setFocus(fHost)
 	case "p":
 		if n > 0 {
@@ -737,10 +746,10 @@ func (m Model) keySetup(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.scr, m.err = scrHome, ""
 		return m, nil
 	case "tab", "down":
-		m.setFocus((m.focus + 1) % fCount)
+		m.setFocus(m.nextField(1))
 		return m, nil
 	case "shift+tab", "up":
-		m.setFocus((m.focus + fCount - 1) % fCount)
+		m.setFocus(m.nextField(-1))
 		return m, nil
 	case "left", "right":
 		d := 1
@@ -748,6 +757,9 @@ func (m Model) keySetup(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			d = -1
 		}
 		switch m.focus {
+		case fKind:
+			m.setKind((m.kind + d + len(kinds)) % len(kinds))
+			return m, nil
 		case fDuration:
 			m.durIdx = (m.durIdx + d + len(durations)) % len(durations)
 			return m, nil
@@ -757,15 +769,15 @@ func (m Model) keySetup(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.focus != fStart {
-			m.setFocus(m.focus + 1)
+			m.setFocus(m.nextField(1))
 			return m, nil
 		}
 		host := strings.TrimSpace(m.in[fHost].Value())
 		if host == "" || strings.TrimSpace(m.in[fUser].Value()) == "" || m.in[fPass].Value() == "" {
-			m.err = "vCenter, username and password are required."
+			m.err = m.kindLabel() + ", username and password are required."
 			return m, nil
 		}
-		m.err, m.scr, m.busy = "", scrBusy, "Checking the vCenter certificate"
+		m.err, m.scr, m.busy = "", scrBusy, "Checking the "+m.kindName()+" certificate"
 		b := m.b
 		return m, tea.Batch(m.spin.Tick, m.startWatch(), func() tea.Msg {
 			c, err := b.Probe(host)
@@ -816,7 +828,12 @@ func (m Model) add(fp string) (tea.Model, tea.Cmd) {
 			cl = append(cl, s)
 		}
 	}
+	kind := engine.KindVCenter
+	if m.kind == 1 {
+		kind, cl = engine.KindONTAP, nil
+	}
 	cfg := engine.Config{
+		Kind:        kind,
 		Host:        strings.TrimSpace(m.in[fHost].Value()),
 		User:        strings.TrimSpace(m.in[fUser].Value()),
 		Fingerprint: fp,
@@ -825,7 +842,7 @@ func (m Model) add(fp string) (tea.Model, tea.Cmd) {
 		Clusters:    cl,
 	}
 	pw, b := m.in[fPass].Value(), m.b
-	m.scr, m.busy = scrBusy, "Connecting to vCenter and reading the inventory"
+	m.scr, m.busy = scrBusy, "Connecting to "+m.kindName()+" and reading the inventory"
 	return m, tea.Batch(m.spin.Tick, m.startWatch(), func() tea.Msg {
 		id, err := b.Add(cfg, pw)
 		return doneMsg{"add", id, err}
@@ -866,6 +883,25 @@ func (m Model) keySource(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	ph := engine.Phase("")
 	if m.src != nil {
 		ph = m.src.Phase
+	}
+	if m.isArray() {
+		switch key {
+		case "1", "2", "3", "4", "tab", "right", "l", "shift+tab", "left", "e", "o":
+			return m, nil
+		case "p":
+			m.note = "An ONTAP cluster has no report of its own: its data reduction and load are in the sizing of the vCenters it serves."
+			return m, nil
+		case "d", "D":
+			anon := key == "D"
+			label := "Checking the cluster and building the diagnostic bundle"
+			if anon {
+				label += " (anonymised)"
+			}
+			return m.busyCmd(label, "diagnose", id, func() error {
+				_, err := m.b.Diagnose(id, anon)
+				return err
+			})
+		}
 	}
 	if m.tab == tabFindings {
 		switch key {
@@ -971,7 +1007,7 @@ func (m Model) keyResume(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if pw == "" {
 			return m, nil
 		}
-		return m.busyCmd("Reconnecting to vCenter", "resume", id, func() error { return m.b.Resume(id, pw) })
+		return m.busyCmd("Reconnecting to "+srcKind(m.src), "resume", id, func() error { return m.b.Resume(id, pw) })
 	}
 	var cmd tea.Cmd
 	m.pass, cmd = m.pass.Update(k)

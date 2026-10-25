@@ -25,10 +25,12 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/demo"
 	"github.com/MarcoColomb0/rightsizer/internal/engine"
 	"github.com/MarcoColomb0/rightsizer/internal/ipc"
+	"github.com/MarcoColomb0/rightsizer/internal/logring"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 	"github.com/MarcoColomb0/rightsizer/internal/sshd"
 	"github.com/MarcoColomb0/rightsizer/internal/tui"
 	"github.com/MarcoColomb0/rightsizer/internal/vault"
+	rsversion "github.com/MarcoColomb0/rightsizer/internal/version"
 )
 
 var version = "dev"
@@ -55,6 +57,8 @@ func main() {
 		stop()
 	case "export":
 		err = export()
+	case "diagnose-ontap":
+		err = diagnoseONTAP(os.Args[2:])
 	case "backup", "restore":
 		switch {
 		case len(os.Args) != 3:
@@ -86,6 +90,7 @@ Usage:
   rightsizer demo            try the console with synthetic vCenters
   rightsizer status          print a short status
   rightsizer export          write the latest PDF report to stdout
+  rightsizer diagnose-ontap  check an ONTAP cluster and write a diagnostic bundle
   rightsizer backup <file>   archive the data directory
   rightsizer restore <file>  replace the data directory from an archive
   rightsizer daemon          run the engine (used by the container)
@@ -107,8 +112,25 @@ func env(k, def string) string {
 
 func applianceMode() bool { return os.Getenv("RIGHTSIZER_APPLIANCE") == "1" }
 
+// setupLogging writes to stderr and keeps the latest records in memory for
+// diagnostic bundles: at debug level on pre-releases or with
+// RIGHTSIZER_DEBUG=1, which also sends debug records to stderr.
+func setupLogging() {
+	debug := os.Getenv("RIGHTSIZER_DEBUG") == "1"
+	out := slog.LevelInfo
+	keep := slog.LevelInfo
+	if debug {
+		out = slog.LevelDebug
+	}
+	if debug || rsversion.IsPre(version) {
+		keep = slog.LevelDebug
+	}
+	logring.Default = logring.New(2000)
+	slog.SetDefault(slog.New(logring.Default.Handler(keep, slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: out}))))
+}
+
 func runDaemon() error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	setupLogging()
 	if err := os.MkdirAll(dataDir(), 0o700); err != nil {
 		return err
 	}

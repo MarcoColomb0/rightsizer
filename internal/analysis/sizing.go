@@ -318,6 +318,8 @@ type SizingInput struct {
 	Result *Result
 	Estate *vc.Estate
 	Params SizingParams
+	// Arrays are the ONTAP clusters added, matched to datastores.
+	Arrays []ArrayInput
 }
 
 func Size(in SizingInput) *Sizing {

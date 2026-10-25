@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/ontap"
+	"github.com/MarcoColomb0/rightsizer/internal/ontap/ontapsim"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
@@ -25,6 +27,8 @@ type Config struct {
 	Load float64
 	End  time.Time
 	Days int
+	// NoArray leaves the datastores on storage rightsizer does not read.
+	NoArray bool
 }
 
 // Default is the estate used by report tests.
@@ -41,6 +45,9 @@ type Data struct {
 	Config Config
 	Input  analysis.Input
 	Estate *vc.Estate
+	// Arrays is the ONTAP cluster behind the datastores, when NoArray is
+	// not set.
+	Arrays []analysis.ArrayInput
 }
 
 var guests = []string{"Red Hat Enterprise Linux 9", "Microsoft Windows Server 2022 (64-bit)", "Ubuntu Linux (64-bit)"}
@@ -121,13 +128,21 @@ func Generate(c Config) Data {
 		st.Clusters[name] = cs
 	}
 	storage(st, est, start, end)
+	var arrays []analysis.ArrayInput
+	if !c.NoArray {
+		var data int64
+		for _, vm := range inv.VMs {
+			data += vm.Committed
+		}
+		arrays = []analysis.ArrayInput{Array(c.VCenter, est, data, start, end)}
+	}
 	in := analysis.Input{Inv: inv, RT: st, Profile: analysis.ProfileByName("balanced"), Start: start, End: end,
 		Planned: time.Duration(c.Days) * 24 * time.Hour,
 		Exclusions: []analysis.Exclusion{
 			{ID: "1", Name: inv.VMs[len(inv.VMs)-3].Name, Reason: "Vendor requirement", Note: "Vendor sizing guide for the appliance requires 8 vCPU and 32 GB.", Created: end.Add(-40 * 24 * time.Hour)},
 		},
 		Orphans: []vc.OrphanDisk{{Datastore: "ds-prod-01", Path: "[ds-prod-01] old-sql02/old-sql02.vmdk", Size: 412 << 30, Modified: end.Add(-200 * 24 * time.Hour)}}}
-	return Data{Config: c, Input: in, Estate: est}
+	return Data{Config: c, Input: in, Estate: est, Arrays: arrays}
 }
 
 func vmStats(rng *rand.Rand, start, end time.Time, samples, days, vcpu int, base, memb float64, idle, night bool) *analysis.VMStats {
@@ -170,7 +185,7 @@ func storage(st *analysis.Store, est *vc.Estate, start, end time.Time) {
 		id := fmt.Sprintf("ds%d", i)
 		est.Datastores = append(est.Datastores, vc.DatastoreDetail{Name: fmt.Sprintf("ds-prod-%02d", i+1), Type: "VMFS", Version: "VMFS 6.82", ID: id,
 			Capacity: 20 << 40, Free: int64(4+i*2) << 40, Uncommitted: 8 << 40, Accessible: true, Hosts: all, VMs: 20,
-			LUNs: []vc.LUN{{Name: "naa.600a0980383030", Vendor: "ACME", Model: "Array 9000", Capacity: 20 << 40, Transport: "FC", Paths: 4, Policy: "VMW_PSP_RR"}}})
+			LUNs: []vc.LUN{{Name: ontap.NAA(fmt.Sprintf("80AbK%07d", i+1)), Vendor: "NETAPP", Model: "LUN C-Mode", Capacity: 20 << 40, Transport: "FC", Paths: 4, Policy: "VMW_PSP_RR"}}})
 		st.IO[id] = &analysis.IOStats{}
 	}
 	est.Datastores = append(est.Datastores, vc.DatastoreDetail{Name: "nfs-backup", Type: "NFS", Version: "NFS 3", ID: "nfs",
@@ -211,8 +226,64 @@ func Result(d Data) *analysis.Result {
 
 // Sizing computes the hardware refresh sizing of the data.
 func Sizing(d Data, r *analysis.Result, p analysis.SizingParams) *analysis.Sizing {
-	sz := analysis.Size(analysis.SizingInput{Input: d.Input, Result: r, Estate: d.Estate, Params: p})
+	sz := analysis.Size(analysis.SizingInput{Input: d.Input, Result: r, Estate: d.Estate, Params: p, Arrays: d.Arrays})
 	sz.VCenter = r.VCenter
 	sz.Final = r.Final
 	return sz
+}
+
+// Array builds the ONTAP cluster serving the sample datastores: the four
+// FC datastores on LUNs (serials 80AbK0000001…) and nfs-backup on an NFS
+// volume, plus file shares no datastore uses.
+func Array(vcenter string, est *vc.Estate, data int64, start, end time.Time) analysis.ArrayInput {
+	ratios := []float64{3.1, 2.6, 2.2, 1.8}
+	var ds []ontapsim.Datastore
+	for i, d := range est.Datastores {
+		if d.Remote != "" {
+			continue
+		}
+		ds = append(ds, ontapsim.Datastore{Name: strings.ReplaceAll(d.Name, "-", "_"), Used: data * int64(4-i) / 10, Ratio: ratios[i%len(ratios)], Snapshots: int64(150+i*90) << 30})
+	}
+	ds = append(ds,
+		ontapsim.Datastore{Name: "backup", NFS: true, Used: data / 4, Ratio: 1.4},
+		ontapsim.Datastore{Name: "home_shares", NFS: true, Used: 9 << 40, Ratio: 1.6, Snapshots: 2 << 40})
+	name := "aff-" + strings.Split(vcenter, ".")[0]
+	inv, _ := ontapsim.Fixture(name, ds)
+	inv.Taken = end
+	for i := range inv.Volumes {
+		if inv.Volumes[i].Name == "backup" {
+			inv.Volumes[i].Path = "/vol/backup"
+		}
+	}
+	for i := range inv.LUNs {
+		inv.LUNs[i].Serial = fmt.Sprintf("80AbK%07d", i+1)
+	}
+	inv.Aggregates[1].Inactive = 6 << 40
+	st := analysis.NewArrayStore()
+	var cl, cpu1, cpu2 []ontap.Sample
+	vols := map[string][]ontap.Sample{}
+	for t := start; t.Before(end); t = t.Add(5 * time.Minute) {
+		x := ontapsim.Default(ontap.ClusterObject, "", t)
+		x.T, x.Interval = t, 300
+		cl = append(cl, x)
+		n := x
+		n.CPU = x.CPU * 0.9
+		cpu1 = append(cpu1, n)
+		n.CPU = x.CPU * 0.7
+		cpu2 = append(cpu2, n)
+		for i, l := range inv.LUNs {
+			v := ontapsim.Default(ontap.VolumeObject, "", t)
+			v.T, v.Interval = t, 300
+			v.ReadIOPS *= 1 + float64(i)/2
+			vols[l.VolumeUUID] = append(vols[l.VolumeUUID], v)
+		}
+	}
+	st.Add(ontap.ClusterObject, "", cl, start, end)
+	st.Add(ontap.NodeObject, inv.Nodes[0].Name, cpu1, start, end)
+	st.Add(ontap.NodeObject, inv.Nodes[1].Name, cpu2, start, end)
+	for id, ss := range vols {
+		st.Add(ontap.VolumeObject, id, ss, start, end)
+	}
+	st.Flush()
+	return analysis.ArrayInput{Host: name + ".corp.local", About: "NetApp ONTAP 9.14.1 (cluster " + name + ")", Inv: inv, RT: st}
 }
