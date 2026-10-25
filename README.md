@@ -107,6 +107,15 @@ make image      # container image rightsizer:local
 
 `appliance/smoke-test.sh` boots the appliance in QEMU and `appliance/build.sh` builds the OVA. `vhs docs/demo.tape` records the showcase.
 
+To release, rename `## Unreleased` in `CHANGELOG.md` to `## vX.Y.Z - YYYY-MM-DD`, then:
+
+```bash
+sh .github/release-notes.sh vX.Y.Z    # must print the notes, or CI rejects the tag
+git commit -am "Release vX.Y.Z" && git push
+gh run watch                          # wait for CI on main to pass
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
 ## License
 
 [Apache License 2.0](LICENSE) © [Marco Colombo](https://marco.wf)
