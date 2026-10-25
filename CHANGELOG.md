@@ -6,7 +6,7 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 ### Changed
 - Update Flatcar LTS to v4081.3.11
-- Update docker/login-action digest to 81c6f93
+- Update docker/login-action to 81c6f93
 - Update VMware govmomi to v0.56.1
 
 ## v1.2.1 - 2026-10-21
