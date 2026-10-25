@@ -8,7 +8,6 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 - NetApp ONTAP clusters (9.10 or later) can be added as sources with a `readonly` user. Their volumes and LUNs are matched to the datastores of every vCenter, and the sizing shows the data reduction measured today, the physical capacity the planned storage needs at that reduction, array Snapshot copies, data in other volumes, and the controllers' load. The sizing PDF has a new ONTAP section and the CSV data adds `ontap-clusters.csv`, `ontap-aggregates.csv` and the ONTAP volume of each datastore.
 - Datastores on NetApp LUNs are flagged in the sizing when their ONTAP cluster has not been added.
-- Diagnostic bundles for ONTAP clusters: `d` (or `D`, anonymised) on a cluster checks what rightsizer reads, explains how each datastore matched, and shares a zip with the checks, the API responses and the latest logs. `rightsizer diagnose-ontap` runs the same checks from any machine with Docker.
 
 ### Changed
 

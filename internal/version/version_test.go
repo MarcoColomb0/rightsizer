@@ -34,4 +34,7 @@ func TestIsPre(t *testing.T) {
 	if !IsPre("v1.4.0-rc.1") || IsPre("v1.4.0") || IsPre("dev") {
 		t.Fatal("pre-release detection")
 	}
+	if !Diagnostics("v1.4.0-rc.1") || Diagnostics("v1.4.0") || Diagnostics("dev") || Diagnostics("v1.3.0-4-gabcdef") {
+		t.Fatal("diagnostic bundles are for pre-releases only")
+	}
 }

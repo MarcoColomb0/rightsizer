@@ -520,7 +520,10 @@ func (m Model) sourceKeys(more key.Binding) keyMap {
 		if m.src != nil && m.src.Phase != engine.Done {
 			act = append(act, bind("f", "finish now"))
 		}
-		act = append(act, bind("d", "diagnostics"), bind("D", "anonymised diagnostics"), bind("+", "collect for longer"), bind("x", "remove"))
+		if m.opt.Diagnostics {
+			act = append(act, bind("d", "diagnostics"), bind("D", "anonymised diagnostics"))
+		}
+		act = append(act, bind("+", "collect for longer"), bind("x", "remove"))
 		return keyMap{short: append([]key.Binding{bind("esc", "back"), bind("↑/↓", "scroll")}, act...)}
 	}
 	nav := []key.Binding{bind("1-4", "tabs"), bind("tab", "next tab"), bind("esc", "back")}

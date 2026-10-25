@@ -114,6 +114,8 @@ type Options struct {
 	// Notes returns the release notes of every version newer than the
 	// running one, shown on the update prompt.
 	Notes func() ([]appliance.Note, error)
+	// Diagnostics offers diagnostic bundles, on pre-releases only.
+	Diagnostics bool
 }
 
 type Model struct {
@@ -892,6 +894,9 @@ func (m Model) keySource(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.note = "An ONTAP cluster has no report of its own: its data reduction and load are in the sizing of the vCenters it serves."
 			return m, nil
 		case "d", "D":
+			if !m.opt.Diagnostics {
+				return m, nil
+			}
 			anon := key == "D"
 			label := "Checking the cluster and building the diagnostic bundle"
 			if anon {

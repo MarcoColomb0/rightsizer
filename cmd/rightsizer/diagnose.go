@@ -15,6 +15,7 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/diag"
 	"github.com/MarcoColomb0/rightsizer/internal/ontap"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
+	rsversion "github.com/MarcoColomb0/rightsizer/internal/version"
 )
 
 const diagnoseUsage = `usage: rightsizer diagnose-ontap [-fingerprint FP] [-anonymise] [-o FILE] HOST USER
@@ -32,6 +33,9 @@ current directory. With Docker:
 `
 
 func diagnoseONTAP(args []string) error {
+	if !rsversion.Diagnostics(version) {
+		return errors.New("diagnose-ontap is available in pre-releases only")
+	}
 	fs := flag.NewFlagSet("diagnose-ontap", flag.ContinueOnError)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, diagnoseUsage) }
 	fp := fs.String("fingerprint", "", "SHA-256 fingerprint of the cluster's self-signed certificate")

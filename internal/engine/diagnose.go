@@ -20,6 +20,8 @@ import (
 
 func diagShare(id string) string { return "diag:" + id }
 
+var errNoDiagnostics = errors.New("diagnostic bundles are available in pre-releases only")
+
 const diagReadme = `rightsizer diagnostic bundle
 
 Built on request from the console; nothing was sent anywhere. Share it with
@@ -41,6 +43,9 @@ token within one bundle.
 // Diagnose builds a diagnostic bundle for an ONTAP source and shares it on
 // the download server.
 func (e *Engine) Diagnose(ctx context.Context, id string, anonymise bool) (*report.Share, error) {
+	if !e.Diagnostics {
+		return nil, errNoDiagnostics
+	}
 	s, err := e.get(id)
 	if err != nil {
 		return nil, err

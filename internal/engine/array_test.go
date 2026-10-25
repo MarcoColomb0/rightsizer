@@ -70,6 +70,10 @@ func TestONTAPSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	if _, err := e.Diagnose(ctx, "x", false); !errors.Is(err, errNoDiagnostics) {
+		t.Fatalf("stable releases have no diagnostic bundles: %v", err)
+	}
+	e.Diagnostics = true
 
 	if _, err := e.Add(ctx, arrayCfg(arr), "wrong"); !ontap.IsAuthError(err) {
 		t.Fatalf("wrong ONTAP password must be refused, got %v", err)

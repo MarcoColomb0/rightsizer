@@ -158,6 +158,8 @@ type Engine struct {
 	dir   string
 	web   *report.Server
 	vault *vault.Vault
+	// Diagnostics enables diagnostic bundles, on pre-releases only.
+	Diagnostics bool
 
 	mu      sync.Mutex
 	sources map[string]*Source

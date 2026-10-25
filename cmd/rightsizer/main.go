@@ -90,7 +90,6 @@ Usage:
   rightsizer demo            try the console with synthetic vCenters
   rightsizer status          print a short status
   rightsizer export          write the latest PDF report to stdout
-  rightsizer diagnose-ontap  check an ONTAP cluster and write a diagnostic bundle
   rightsizer backup <file>   archive the data directory
   rightsizer restore <file>  replace the data directory from an archive
   rightsizer daemon          run the engine (used by the container)
@@ -158,6 +157,7 @@ func runDaemon() error {
 	if err != nil {
 		return err
 	}
+	e.Diagnostics = rsversion.Diagnostics(version)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	slog.Info("rightsizer engine started", "version", version, "appliance", applianceMode())
@@ -186,7 +186,7 @@ func runDaemon() error {
 				return tui.New(ipc.Local{E: e, Host: host}, tui.Options{
 					Version: version, Latest: r.Tag, ReleaseURL: r.URL,
 					Notes:      func() ([]appliance.Note, error) { return r.Notes, nil },
-					CanUpgrade: true, AdminSettings: true, Appliance: true,
+					CanUpgrade: true, AdminSettings: true, Appliance: true, Diagnostics: rsversion.Diagnostics(version),
 				})
 			},
 		})
@@ -260,9 +260,10 @@ func runTUI() error {
 		return fmt.Errorf("engine not running, start it with `rightsizer start`: %w", err)
 	}
 	m, err := tea.NewProgram(tui.New(c, tui.Options{
-		Version:    version,
-		Latest:     os.Getenv("RIGHTSIZER_LATEST"),
-		ReleaseURL: os.Getenv("RIGHTSIZER_RELEASE_URL"),
+		Version:     version,
+		Diagnostics: rsversion.Diagnostics(version),
+		Latest:      os.Getenv("RIGHTSIZER_LATEST"),
+		ReleaseURL:  os.Getenv("RIGHTSIZER_RELEASE_URL"),
 		// Only asked for when the launcher offers an update, so turning
 		// update checks off also keeps the console from contacting GitHub.
 		Notes: func() ([]appliance.Note, error) {
@@ -291,7 +292,7 @@ func runDemo(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opt := tui.Options{Version: "v1.0.0", AdminSettings: *app, Appliance: *app, CanUpgrade: *upd}
+	opt := tui.Options{Version: "v1.0.0", AdminSettings: *app, Appliance: *app, CanUpgrade: *upd, Diagnostics: rsversion.Diagnostics(version)}
 	if *upd {
 		opt.Latest, opt.ReleaseURL = "v1.1.0", "https://github.com/MarcoColomb0/rightsizer/releases"
 		opt.Notes = func() ([]appliance.Note, error) { return demo.Notes(), nil }

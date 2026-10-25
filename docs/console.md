@@ -17,9 +17,9 @@ Add the ONTAP clusters behind your datastores to measure the data reduction they
 
 Datastores are matched to the cluster automatically, from every vCenter: VMFS datastores by LUN serial number and NFS datastores by export path and data interface. A cluster serving several vCenters is added once. Its card shows the data reduction, the space written and the controllers' CPU; the reduction appears in the storage section of each vCenter's sizing, its PDF and its CSV data. A cluster has no report of its own.
 
-## Diagnostics
+## Diagnostics (pre-releases only)
 
-When an ONTAP cluster does not match its datastores or a figure looks wrong, open the cluster and press `d` for a diagnostic bundle, or `D` for an anonymised one. rightsizer reads the cluster again, checks every assumption the sizing makes, explains for each datastore of each vCenter what it matched or why not, and shares a zip on a download link like a report. Start with `checks.txt`; attach the zip to a GitHub issue. Passwords are never included, and the anonymised bundle replaces names, addresses, serial numbers and paths with tokens that keep their relations.
+Pre-releases such as v1.4.0-rc.1 offer diagnostic bundles; full releases do not. When an ONTAP cluster does not match its datastores or a figure looks wrong, open the cluster and press `d` for a diagnostic bundle, or `D` for an anonymised one. rightsizer reads the cluster again, checks every assumption the sizing makes, explains for each datastore of each vCenter what it matched or why not, and shares a zip on a download link like a report. Start with `checks.txt`; attach the zip to a GitHub issue. Passwords are never included, and the anonymised bundle replaces names, addresses, serial numbers and paths with tokens that keep their relations.
 
 Before deploying anything, the same checks run from any machine with Docker; the bundle is written to stdout:
 

@@ -327,6 +327,14 @@ func TestONTAPSourceScreen(t *testing.T) {
 	if m.tab != tabClusters || len(f.sized) != 0 {
 		t.Fatal("tabs and reports stay closed for ONTAP sources")
 	}
+	v = view(t, send(t, m, typ("?")))
+	if strings.Contains(v, "diagnostics") {
+		t.Fatal("stable releases offer no diagnostic bundles")
+	}
+	if send(t, m, typ("d")); f.diagnosed != "" {
+		t.Fatal("d must do nothing on a stable release")
+	}
+	m.opt.Diagnostics = true
 	m = send(t, m, typ("?"))
 	view(t, m, "d diagnostics", "D anonymised diagnostics")
 	m = send(t, m, typ("D"))

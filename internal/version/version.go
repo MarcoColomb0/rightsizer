@@ -24,6 +24,10 @@ func Newer(latest, current string) bool {
 	return cpre
 }
 
+// Diagnostics reports whether a version offers diagnostic bundles: only
+// pre-releases, which are built to be tested and reported on.
+func Diagnostics(v string) bool { return IsPre(v) }
+
 // IsPre reports a pre-release version such as v1.4.0-rc.1.
 func IsPre(v string) bool {
 	_, pre, ok := parse(v)
