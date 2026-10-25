@@ -404,6 +404,15 @@ func (b *Backend) Diagnose(id string, anonymise bool) (*report.Share, error) {
 	return b.share("diag:"+id, fmt.Sprintf("rightsizer-%s-%s.zip", kind, time.Now().Format("20060102-150405")), false), nil
 }
 
+func (b *Backend) SetPreReleases(on bool) (*appliance.Release, error) {
+	b.wait()
+	if on {
+		return &appliance.Release{Tag: "v1.2.0-rc.1", URL: "https://github.com/MarcoColomb0/rightsizer/releases",
+			Notes: []appliance.Note{{Tag: "v1.2.0-rc.1", Date: time.Now(), Body: "### Added\n- A feature to try before it is released."}}}, nil
+	}
+	return &appliance.Release{Tag: "v1.1.0", URL: "https://github.com/MarcoColomb0/rightsizer/releases", Notes: Notes()}, nil
+}
+
 func (b *Backend) StopShare(id string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

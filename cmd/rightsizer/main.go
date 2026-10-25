@@ -169,8 +169,9 @@ func runDaemon() error {
 	errc := make(chan error, 2)
 	go func() { errc <- ipc.Serve(ctx, socket(), ipc.Local{E: e, Host: host}) }()
 	if applianceMode() {
-		checker := &appliance.Checker{Current: version}
-		if env("RIGHTSIZER_UPDATE_CHECK", "true") == "true" {
+		checker := &appliance.Checker{Current: version, Pre: host.PreReleases}
+		checks := env("RIGHTSIZER_UPDATE_CHECK", "true") == "true"
+		if checks {
 			go checker.Run(ctx, 6*time.Hour)
 		}
 		keyPath := filepath.Join(dataDir(), "ssh", "host_ed25519")
@@ -183,10 +184,17 @@ func runDaemon() error {
 			Login:       e.Unlock,
 			Program: func() tea.Model {
 				r := checker.Latest()
-				return tui.New(ipc.Local{E: e, Host: host}, tui.Options{
+				local := ipc.Local{E: e, Host: host}
+				if checks {
+					local.Checker = checker
+				}
+				return tui.New(local, tui.Options{
 					Version: version, Latest: r.Tag, ReleaseURL: r.URL,
 					Notes:      func() ([]appliance.Note, error) { return r.Notes, nil },
 					CanUpgrade: true, AdminSettings: true, Appliance: true, Diagnostics: rsversion.Diagnostics(version),
+					// The channel needs release checks, which the vApp
+					// options can turn off.
+					Channel: checks, PreReleases: host.PreReleases(),
 				})
 			},
 		})
@@ -267,7 +275,7 @@ func runTUI() error {
 		// Only asked for when the launcher offers an update, so turning
 		// update checks off also keeps the console from contacting GitHub.
 		Notes: func() ([]appliance.Note, error) {
-			r, err := appliance.Fetch(context.Background(), version)
+			r, err := appliance.Fetch(context.Background(), version, false)
 			return r.Notes, err
 		},
 		CanUpgrade: true,
@@ -292,7 +300,7 @@ func runDemo(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	opt := tui.Options{Version: "v1.0.0", AdminSettings: *app, Appliance: *app, CanUpgrade: *upd, Diagnostics: rsversion.Diagnostics(version)}
+	opt := tui.Options{Version: "v1.0.0", AdminSettings: *app, Appliance: *app, CanUpgrade: *upd, Channel: *app, Diagnostics: rsversion.Diagnostics(version)}
 	if *upd {
 		opt.Latest, opt.ReleaseURL = "v1.1.0", "https://github.com/MarcoColomb0/rightsizer/releases"
 		opt.Notes = func() ([]appliance.Note, error) { return demo.Notes(), nil }

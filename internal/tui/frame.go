@@ -224,6 +224,12 @@ func (m Model) modal() (string, []zone) {
 	switch m.confirm {
 	case "reboot":
 		title, text, yes = "Restart the appliance now?", "This session closes and collection pauses until you log in again.", "Restart"
+	case "channel":
+		if m.opt.PreReleases {
+			title, text, yes = "Leave the pre-release channel?", "Only full releases are offered again. The version installed stays until the next full release replaces it.", "Leave"
+		} else {
+			title, text, yes = "Join the pre-release channel?", "Release candidates are offered as upgrades, to test new features before they are released. They may have bugs; data is backed up before each upgrade, but there is no way back to an earlier version.", "Join"
+		}
 	case "finish":
 		title, text, yes = "Finish the analysis now?", "Collection stops and the final report is built from the data so far.", "Finish"
 	case "remove":
@@ -477,6 +483,13 @@ func (m Model) keyMap() keyMap {
 		}
 		if m.canReboot() {
 			sys = append(sys, bind("R", "restart"))
+		}
+		if m.opt.Channel {
+			label := "join pre-releases"
+			if m.opt.PreReleases {
+				label = "leave pre-releases"
+			}
+			sys = append(sys, bind("P", label))
 		}
 		return keyMap{
 			short: []key.Binding{bind("↑/↓", "select"), bind("enter", "open"), bind("a", "add source"), bind("p", "PDF"), bind("x", "exclusions"), more, bind("q", "quit")},

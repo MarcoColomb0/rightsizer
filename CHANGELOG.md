@@ -13,6 +13,12 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 
 - Pre-releases such as v1.4.0-rc.1 are published as GitHub pre-releases: installs, upgrades and update prompts keep the latest full release, and `install.sh --tag` installs a pre-release by name. An installed pre-release is offered its final release.
 
+## v1.3.1 - 2026-10-25
+
+### Added
+
+- Pre-release channel for the appliance: press `P` on the home screen to have release candidates offered as upgrades, with the usual backup and rollback, and again to leave it. Off by default.
+
 ## v1.3.0 - 2026-10-25
 
 ### Changed

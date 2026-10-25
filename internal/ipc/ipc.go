@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,12 +48,40 @@ type Backend interface {
 	PublishSizing(id string) (*report.Share, error)
 	// Diagnose builds and shares a diagnostic bundle for an ONTAP source.
 	Diagnose(id string, anonymise bool) (*report.Share, error)
+	// SetPreReleases joins or leaves the appliance's pre-release channel
+	// and returns the latest release it now follows.
+	SetPreReleases(on bool) (*appliance.Release, error)
 }
 
 // Local serves the console in-process. Host is set on the appliance.
 type Local struct {
-	E    *engine.Engine
-	Host *appliance.Host
+	E       *engine.Engine
+	Host    *appliance.Host
+	Checker *appliance.Checker
+}
+
+var errNoChannel = errors.New("only the appliance has a pre-release channel")
+
+// SetPreReleases switches the channel and checks for releases at once. A
+// failed check still switches: the next periodic check catches up.
+func (l Local) SetPreReleases(on bool) (*appliance.Release, error) {
+	if l.Host == nil {
+		return nil, errNoChannel
+	}
+	if err := l.Host.SetPreReleases(on); err != nil {
+		return nil, err
+	}
+	if l.Checker == nil {
+		return &appliance.Release{}, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	r, err := l.Checker.Refresh(ctx)
+	if err != nil {
+		slog.Warn("release check after switching channel", "err", err)
+		return &appliance.Release{}, nil
+	}
+	return &r, nil
 }
 
 func (l Local) Summary() (*engine.Summary, error) {
@@ -414,6 +443,8 @@ func (c *Client) Diagnose(id string, anonymise bool) (*report.Share, error) {
 	err := c.call("POST", "/sources/"+id+"/diagnose", diagnoseRequest{Anonymise: anonymise}, &sh)
 	return &sh, err
 }
+
+func (c *Client) SetPreReleases(bool) (*appliance.Release, error) { return nil, errNoChannel }
 
 func (c *Client) RequestReboot() error {
 	return errors.New("only the appliance can be restarted from the console")
