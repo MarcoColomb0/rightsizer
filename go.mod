@@ -12,7 +12,7 @@ require (
 	charm.land/wish/v2 v2.0.5
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/vmware/govmomi v0.56.1
+	github.com/vmware/govmomi v0.56.2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 )
