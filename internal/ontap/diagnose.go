@@ -121,8 +121,14 @@ func checkAggregates(inv *Inventory, add addFunc) {
 		add("fail", "aggregates", "no aggregate returned")
 		return
 	}
-	var noRatio, noNS, odd []string
+	var noRatio, noNS, odd, same, cold []string
 	for _, a := range inv.Aggregates {
+		if a.CompactionSaved > 0 && a.CompactionSaved == a.DedupeSaved {
+			same = append(same, a.Name)
+		}
+		if a.PhysicalUsed > 0 && float64(a.Inactive) > 0.9*float64(a.PhysicalUsed) {
+			cold = append(cold, fmt.Sprintf("%s %d of %d bytes", a.Name, a.Inactive, a.PhysicalUsed))
+		}
 		if a.Ratio <= 0 {
 			noRatio = append(noRatio, a.Name)
 		}
@@ -149,6 +155,12 @@ func checkAggregates(inv *Inventory, add addFunc) {
 	}
 	if len(odd) > 0 {
 		add("warn", "aggregate ratio semantics", "%s", strings.Join(odd, "; "))
+	}
+	if len(same) > 0 {
+		add("info", "aggregate savings counters", "compaction and cross-volume deduplication report the same value on %s (seen on 9.12); the reduction uses the aggregate's ratio instead", strings.Join(same, ", "))
+	}
+	if len(cold) > 0 {
+		add("warn", "inactive data", "reported as more than 90%% of what is written (%s): not used for advice", strings.Join(cold, "; "))
 	}
 }
 
@@ -178,7 +190,8 @@ func checkVolumes(inv *Inventory, add addFunc) {
 		if saved == 0 {
 			saved = v.DedupeSaved + v.CompressionSaved
 		}
-		if v.Logical > 1<<30 {
+		// Snapshot copies count differently in logical_space.used.
+		if v.Logical > 1<<30 && v.SnapshotUsed == 0 {
 			if est := v.Physical + saved; math.Abs(float64(est-v.Logical))/float64(v.Logical) > 0.2 {
 				mismatch++
 				if len(examples) < 10 {
@@ -306,7 +319,11 @@ func diagnoseMetrics(ctx context.Context, c *Client, inv *Inventory, add addFunc
 		case si.Samples == 0:
 			add("warn", "metrics "+name, "no complete sample")
 		case si.Samples < want*8/10:
-			add("warn", "metrics "+name, "%d of about %d samples (%s to %s)", si.Samples, want, si.First.Format(time.RFC3339), si.Last.Format(time.RFC3339))
+			status := "warn"
+			if strings.HasPrefix(si.Object, "volume ") && si.Interval == Month {
+				status = "info" // a volume younger than the archive
+			}
+			add(status, "metrics "+name, "%d of about %d samples (%s to %s)", si.Samples, want, si.First.Format(time.RFC3339), si.Last.Format(time.RFC3339))
 		case len(si.Steps) > 1 || si.Steps[si.Interval.Step()] == 0:
 			add("warn", "metrics "+name, "sample lengths %v, expected %d s", si.Steps, si.Interval.Step())
 		case si.MaxLatUs > 0 && si.MaxLatUs < 20:
@@ -321,7 +338,12 @@ func diagnoseMetrics(ctx context.Context, c *Client, inv *Inventory, add addFunc
 			}
 		}
 		if si.Interval == Month && si.Error == "" && !si.First.IsZero() && now.Sub(si.First) < 14*24*time.Hour {
-			add("warn", "history "+si.Object, "the archive starts %s: less than the 14 days imported", si.First.Format(time.RFC3339))
+			// A volume created recently has a short archive of its own.
+			status := "info"
+			if si.Object == "cluster" {
+				status = "warn"
+			}
+			add(status, "history "+si.Object, "the archive starts %s: less than the 14 days imported", si.First.Format(time.RFC3339))
 		}
 	}
 	return out

@@ -89,6 +89,22 @@ func (e *Engine) Diagnose(ctx context.Context, id string, anonymise bool) (*repo
 		c := src.status(false).Config
 		b.Identify("host", c.Host)
 		b.Identify("user", c.User)
+		// Names from vCenter appear in sizing notes and logs.
+		src.mu.Lock()
+		if inv := src.st.Inventory; inv != nil {
+			for _, v := range inv.VMs {
+				b.Identify("name", v.Name, v.Cluster)
+			}
+			for _, h := range inv.Hosts {
+				b.Identify("host", h.Name)
+			}
+		}
+		if est := src.st.Estate; est != nil {
+			for _, d := range est.Datastores {
+				b.Identify("name", d.Name)
+			}
+		}
+		src.mu.Unlock()
 	}
 	b.Text("README.txt", diagReadme)
 	estates := e.estatesByHost()

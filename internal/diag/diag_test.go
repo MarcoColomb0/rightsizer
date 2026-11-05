@@ -53,7 +53,7 @@ func TestAnonymise(t *testing.T) {
 			t.Fatalf("%q left in the bundle:\n%s", leak, all)
 		}
 	}
-	for _, kept := range []string{"data_nfs", "\"Volumes\"", "\"records\"", "fields=", "VMFS", "→", "/api/storage/volumes", "[PASS] nodes: 2 nodes", "[PASS] volumes", "VMware", "naa.6000c2"} {
+	for _, kept := range []string{"data_nfs", "\"Volumes\"", "\"records\"", "fields=", "VMFS", "→", "/api/storage/volumes", "[PASS] nodes: 2 nodes", "[PASS] volumes", "VMware", "device-"} {
 		if !strings.Contains(all, kept) {
 			t.Fatalf("%q must stay readable:\n%s", kept, all)
 		}
@@ -98,5 +98,54 @@ func TestPlainKeepsNamesButNotSecrets(t *testing.T) {
 	b.Text("log.txt", "svm_prod login hunter2-password")
 	if got := read(t, b)["log.txt"]; got != "svm_prod login [secret]" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// The SSH client's address in the logs and VM names in the sizing notes
+// must be anonymised too.
+func TestAnonymiseLogsAndVMNames(t *testing.T) {
+	b := New()
+	b.Anonymise = true
+	b.Identify("name", "web-prod-17", "sql_cluster-a01", "ab")
+	b.Text("logs.txt", `level=WARN msg="ssh login failed" remote=10.99.0.42 user=admin
+level=INFO msg="report downloaded" remote=10.99.0.42:59097
+version 9.12.1 build 8.0.3.24322831 on 127.0.0.1
+`)
+	b.JSON("collection.json", map[string]any{"notes": []string{"Largest VMs: web-prod-17 with 48 vCPU and sql_cluster-a01 with 200 GB."}})
+	files := read(t, b)
+	all := files["logs.txt"] + files["collection.json"]
+	for _, leak := range []string{"10.99.0.42", "web-prod-17", "sql_cluster-a01"} {
+		if strings.Contains(all, leak) {
+			t.Fatalf("%q left:\n%s", leak, all)
+		}
+	}
+	for _, kept := range []string{":59097", "9.12.1", "8.0.3.24322831", "127.0.0.1", "with 48 vCPU", "user=admin"} {
+		if !strings.Contains(all, kept) {
+			t.Fatalf("%q must stay:\n%s", kept, all)
+		}
+	}
+	if strings.Count(files["logs.txt"], strings.Fields(strings.Split(files["logs.txt"], "remote=")[1])[0]) < 2 {
+		t.Fatalf("the same address keeps one token:\n%s", files["logs.txt"])
+	}
+}
+
+// UUIDs embed controller MAC addresses and local disk identifiers embed
+// disk serial numbers.
+func TestAnonymiseIdentifiers(t *testing.T) {
+	b := New()
+	b.Anonymise = true
+	b.JSON("matching.json", []any{map[string]any{"Datastore": "local-01", "Backing": "t10.ATA_____SSD240GB_____________0000AAAA1111________ ATA"}})
+	b.JSON("api.json", []any{map[string]any{"Path": "/api/storage/volumes/11111111-2222-11ee-8000-00a0981234ab/metrics", "Body": map[string]any{
+		"records": []any{map[string]any{"uuid": "11111111-2222-11ee-8000-00a0981234ab"}}}}})
+	b.Text("matching.txt", "local-01: t10.ATA_____SSD240GB_____________0000AAAA1111________ ATA skipped\n")
+	files := read(t, b)
+	all := files["matching.json"] + files["api.json"] + files["matching.txt"]
+	for _, leak := range []string{"00a0981234ab", "11111111-2222", "0000AAAA1111", "local-01"} {
+		if strings.Contains(all, leak) {
+			t.Fatalf("%q left:\n%s", leak, all)
+		}
+	}
+	if !strings.Contains(all, " ATA") || strings.Count(files["api.json"], "uuid-") != 2 {
+		t.Fatalf("vendor readable, one token per UUID:\n%s", all)
 	}
 }

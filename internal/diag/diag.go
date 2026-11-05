@@ -37,7 +37,8 @@ type Bundle struct {
 // replaces them too. kind is host, ip or user.
 func (b *Bundle) Identify(kind string, values ...string) {
 	for _, v := range values {
-		if v = strings.TrimSpace(v); len(v) >= 2 {
+		// Shorter values would replace common words.
+		if v = strings.TrimSpace(v); len(v) >= 3 {
 			b.known = append(b.known, [2]string{kind, v})
 		}
 	}
@@ -125,7 +126,12 @@ var ontapKeys = map[string]string{"name": "name", "serial_number": "serial", "ad
 // datastoreKeys are the fields of matching rows taken from vCenter.
 var datastoreKeys = map[string]string{"VCenter": "host", "Datastore": "name", "Volume": "path", "Backing": "export"}
 
-var ipRE = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
+var (
+	ipRE = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
+	// uuidRE matches ONTAP object identifiers: version 1 UUIDs end with a
+	// controller's MAC address.
+	uuidRE = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
+)
 
 // anonymiser maps each sensitive value to a token derived with a key that
 // is never stored, so the same value gets the same token within a bundle
@@ -195,8 +201,13 @@ func (a *anonymiser) walk(keys map[string]string, key string, v any) {
 			a.m["naa.600a0980"+hex.EncodeToString([]byte(x))] = "naa-" + strings.TrimPrefix(a.token("serial", x), "serial-")
 		case "path", "export":
 			if kind == "export" && !strings.Contains(x, ":/") {
-				// LUN device identifiers and vendors say why a LUN did not
-				// match and identify nobody.
+				// A LUN backing: device identifiers hold serial numbers,
+				// vendors stay readable to say why a LUN did not match.
+				for part := range strings.FieldsSeq(strings.ReplaceAll(x, ",", " ")) {
+					if p := strings.ToLower(part); strings.HasPrefix(p, "naa.") || strings.HasPrefix(p, "t10.") || strings.HasPrefix(p, "eui.") || strings.HasPrefix(p, "mpx.") {
+						a.token("device", part)
+					}
+				}
 				return
 			}
 			for _, part := range strings.FieldsFunc(x, func(r rune) bool { return r == '/' || r == ':' || r == ',' || r == ' ' }) {
@@ -258,6 +269,14 @@ func (a *anonymiser) apply(data []byte) []byte {
 		pairs = append(pairs, k, a.m[k])
 	}
 	s := strings.NewReplacer(pairs...).Replace(string(data))
+	s = uuidRE.ReplaceAllStringFunc(s, func(u string) string { return a.token("uuid", strings.ToLower(u)) })
+	// Any other address, such as an SSH client in the logs.
+	s = ipRE.ReplaceAllStringFunc(s, func(ip string) string {
+		if strings.HasPrefix(ip, "127.") || ip == "0.0.0.0" {
+			return ip
+		}
+		return a.token("ip", ip)
+	})
 	var b strings.Builder
 	b.Grow(len(s))
 	word := func(r byte) bool { return isWord(rune(r)) }

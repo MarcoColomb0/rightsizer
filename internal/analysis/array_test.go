@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -226,5 +227,68 @@ func TestExplainMatches(t *testing.T) {
 	}
 	if got["ds-fc"].Volume != "svm_vmware/ds_fc" {
 		t.Fatalf("volume %q", got["ds-fc"].Volume)
+	}
+}
+
+// quirkyInventory is a made-up cluster with what ONTAP 9.12.1 reports:
+// compaction and cross-volume deduplication savings with the same value,
+// and more inactive data than is written. Volumes reduce 1.6:1 on their
+// own and the aggregates 2.32:1 in all.
+func quirkyInventory(t *testing.T) (*ontap.Inventory, *vc.Estate) {
+	t.Helper()
+	var ds []ontapsim.Datastore
+	est := &vc.Estate{}
+	for i := range 4 {
+		name := fmt.Sprintf("nfs_%02d", i+1)
+		ds = append(ds, ontapsim.Datastore{Name: name, NFS: true, Used: int64(2+i) << 40, Ratio: 1.6})
+		est.Datastores = append(est.Datastores, vc.DatastoreDetail{Name: name, Type: "NFS", Version: "NFS 3", Accessible: true,
+			Capacity: 10 << 40, Free: 5 << 40, Remote: "10.0.40.10:/" + name})
+	}
+	inv, _ := ontapsim.Fixture("c190", ds)
+	for i := range inv.Aggregates {
+		a := &inv.Aggregates[i]
+		a.Ratio, a.RatioNoSnap = 2.32, 2.32
+		a.CompactionSaved, a.DedupeSaved = a.PhysicalUsed/2, a.PhysicalUsed/2
+		a.Inactive = a.PhysicalUsed + 1<<30
+	}
+	return inv, est
+}
+
+func TestAggregateSavingsFromItsRatio(t *testing.T) {
+	inv, est := quirkyInventory(t)
+	in := sizingFixture()
+	in.Estate = est
+	in.Arrays = []ArrayInput{{Host: "cluster", Inv: inv}}
+	r := Size(in).Storage.Array
+	if r.Datastores != 4 {
+		t.Fatalf("matched %d of 4 datastores", r.Datastores)
+	}
+	// The aggregate's ratio, not volume savings times 1 + compaction/written
+	// (2.4:1 here), which double counts on 9.12.
+	if v, got := r.VolumeRatio(), r.Ratio(); math.Abs(v-1.6) > 0.01 || math.Abs(got-2.32) > 0.01 {
+		t.Fatalf("volume %.3f:1, measured %.3f:1, want 1.6 and 2.32", v, got)
+	}
+	before := r.Ratio()
+	for i := range inv.Aggregates {
+		inv.Aggregates[i].CompactionSaved = inv.Aggregates[i].PhysicalUsed
+	}
+	if after := Size(in).Storage.Array.Ratio(); math.Abs(after-before) > 1e-9 {
+		t.Fatalf("reduction moved with the compaction counter: %.3f → %.3f", before, after)
+	}
+}
+
+func TestInactiveNoteNeedsAPlausibleShare(t *testing.T) {
+	inv, est := quirkyInventory(t)
+	in := sizingFixture()
+	in.Estate = est
+	in.Arrays = []ArrayInput{{Host: "cluster", Inv: inv}}
+	if strings.Contains(strings.Join(Size(in).Notes, "\n"), "inactive data") {
+		t.Fatal("an implausible inactive share must not become advice")
+	}
+	for i := range inv.Aggregates {
+		inv.Aggregates[i].Inactive = inv.Aggregates[i].PhysicalUsed / 2
+	}
+	if !strings.Contains(strings.Join(Size(in).Notes, "\n"), "inactive data (50% of what is written)") {
+		t.Fatal("a plausible inactive share is reported")
 	}
 }

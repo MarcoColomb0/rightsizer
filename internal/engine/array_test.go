@@ -190,8 +190,11 @@ func TestONTAPSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	src.mu.Lock()
+	vm, esx := src.st.Inventory.VMs[0].Name, src.st.Inventory.Hosts[0].Name
+	src.mu.Unlock()
 	for name, body := range unzip(t, anon.URL) {
-		for _, leak := range []string{"svm_vmware", "ds_fc", "aff01-01", "cluster aff01", "80AbK0000001", naa, arr.Host(), arr.User} {
+		for _, leak := range []string{"svm_vmware", "ds_fc", "aff01-01", "cluster aff01", "80AbK0000001", naa, arr.Host(), arr.User, vm, esx} {
 			if strings.Contains(body, leak) {
 				t.Fatalf("anonymised %s leaks %q", name, leak)
 			}

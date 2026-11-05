@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
@@ -14,8 +15,28 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
-// maxArrayVolumes caps the volumes whose performance is read per cluster.
-const maxArrayVolumes = 256
+const (
+	// maxArrayVolumes caps the volumes whose performance is read per cluster.
+	maxArrayVolumes = 256
+	// readsAtOnce is how many requests run in parallel against a cluster.
+	readsAtOnce = 4
+	// importPerPoll caps the objects whose archive one poll imports.
+	importPerPoll = 24
+)
+
+// each runs fn for every item, at most n at a time.
+func each[T any](items []T, n int, fn func(int, T)) {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, n)
+	for i, it := range items {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			fn(i, it)
+		})
+	}
+	wg.Wait()
+}
 
 // arrayObject is one thing whose performance is read: the cluster, a node
 // (read by UUID, kept by name) or a volume.
@@ -105,21 +126,28 @@ func (s *Source) pollArray(ctx context.Context) error {
 	}
 	s.importArrayHistory(ctx, cl, hist, objs)
 
+	// Reads run a few at a time: one after another they took 7 s for 16
+	// objects on a real cluster, and grow with every matched volume.
 	type read struct {
-		o  arrayObject
-		ss []ontap.Sample
+		o   arrayObject
+		ss  []ontap.Sample
+		err error
 	}
-	var reads []read
-	for _, o := range objs {
+	results := make([]read, len(objs))
+	each(objs, readsAtOnce, func(i int, o arrayObject) {
 		ss, err := cl.Metrics(ctx, o.kind, o.uuid, ontap.Hour)
+		results[i] = read{o, ss, err}
+	})
+	var reads []read
+	for _, r := range results {
 		switch {
-		case err == nil:
-			reads = append(reads, read{o, ss})
-		case o.kind == ontap.ClusterObject || ontap.IsAuthError(err) || ctx.Err() != nil:
-			return err
+		case r.err == nil:
+			reads = append(reads, r)
+		case r.o.kind == ontap.ClusterObject || ontap.IsAuthError(r.err) || ctx.Err() != nil:
+			return r.err
 		default:
 			// A volume moved or deleted since the last inventory.
-			slog.Debug("ONTAP metrics skipped", "source", s.id, "object", o.id, "err", err)
+			slog.Debug("ONTAP metrics skipped", "source", s.id, "object", r.o.id, "err", r.err)
 		}
 	}
 	s.mu.Lock()
@@ -157,47 +185,53 @@ func (s *Source) importArrayHistory(ctx context.Context, cl *ontap.Client, hist 
 	if len(todo) == 0 || state == "unavailable" && time.Since(tried) < historyEvery {
 		return
 	}
+	// A large import is spread over several polls, so none is held up.
+	total := len(todo)
+	todo = todo[:min(total, importPerPoll)]
 	now := time.Now()
 	plan := ontap.HistoryPlan(now, historyBack)
-	fresh := state == "" || state == "unavailable"
+	fresh := state == "" || state == "unavailable" || strings.HasPrefix(state, "loading")
 	if fresh {
-		s.setHistory("loading")
+		s.setHistory(fmt.Sprintf("loading %d objects", total))
 	}
-	for i, o := range todo {
-		if fresh {
-			s.setHistory(fmt.Sprintf("loading %d%%", i*100/len(todo)))
-		}
-		var got []func()
-		var failure error
+	type archive struct {
+		adds    []func()
+		failure error
+	}
+	results := make([]archive, len(todo))
+	each(todo, readsAtOnce, func(i int, o arrayObject) {
 		// Oldest window first: samples older than the last one seen are
 		// ignored.
 		for _, w := range slices.Backward(plan) {
 			ss, err := cl.Metrics(ctx, o.kind, o.uuid, w.Interval)
 			if err != nil {
-				failure = err
-				break
+				results[i].failure = err
+				return
 			}
 			slog.Debug("ONTAP archive", "source", s.id, "object", o.id, "interval", w.Interval, "samples", len(ss))
-			got = append(got, func() { hist.Add(o.kind, o.id, ss, w.Start, w.End) })
+			results[i].adds = append(results[i].adds, func() { hist.Add(o.kind, o.id, ss, w.Start, w.End) })
 		}
+	})
+	for i, o := range todo {
+		r := results[i]
 		switch {
-		case failure == nil:
-		case ctx.Err() != nil || ontap.IsAuthError(failure):
+		case r.failure == nil:
+		case ctx.Err() != nil || ontap.IsAuthError(r.failure):
 			// Not the archive's fault: the next poll tries again.
 			s.restoreHistory(state)
 			return
 		case o.kind == ontap.ClusterObject:
-			slog.Warn("ONTAP archive unavailable, trying again in an hour", "source", s.id, "err", failure)
+			slog.Warn("ONTAP archive unavailable, trying again in an hour", "source", s.id, "err", r.failure)
 			s.mu.Lock()
 			s.st.HistoryState, s.st.HistorySync = "unavailable", now
 			_ = s.save()
 			s.mu.Unlock()
 			return
 		default:
-			slog.Warn("ONTAP history import failed", "source", s.id, "object", o.id, "err", failure)
+			slog.Warn("ONTAP history import failed", "source", s.id, "object", o.id, "err", r.failure)
 		}
 		s.mu.Lock()
-		for _, add := range got {
+		for _, add := range r.adds {
 			add()
 		}
 		// Read, even when the archive was empty or missing: it is not read
@@ -207,13 +241,13 @@ func (s *Source) importArrayHistory(ctx context.Context, cl *ontap.Client, hist 
 	}
 	s.mu.Lock()
 	hist.Flush()
-	if h := s.st.HistoryState; h == "" || strings.HasPrefix(h, "loading") {
+	if h := s.st.HistoryState; total == len(todo) && (h == "" || strings.HasPrefix(h, "loading")) {
 		s.st.HistoryState = fmt.Sprintf("imported from %s", plan[len(plan)-1].Start.Local().Format("Jan 02"))
 		s.st.HistorySync = now
 	}
 	_ = s.save()
 	s.mu.Unlock()
-	slog.Info("ONTAP history imported", "source", s.id, "objects", len(todo))
+	slog.Info("ONTAP history imported", "source", s.id, "objects", len(todo), "remaining", total-len(todo))
 }
 
 // restoreHistory puts back the archive state an interrupted import found.

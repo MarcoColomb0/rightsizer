@@ -255,13 +255,36 @@ func activeData(v *ontap.Volume) (logical, physical int64) {
 	return physical + max(saved, 0), physical
 }
 
-// aggrFactor is the reduction an aggregate adds on top of its volumes'
-// own deduplication and compression: compaction, which applies to every
-// volume alike.
+// aggrFactor is the reduction an aggregate adds on top of its volumes' own
+// deduplication and compression, such as compaction and cross-volume
+// deduplication, which apply to every volume alike: the aggregate's ratio
+// divided by that of its volumes. The aggregate's savings counters are not
+// used directly: ONTAP 9.12 reports the same value for compaction and for
+// cross-volume deduplication.
 func aggrFactor(inv *ontap.Inventory, v *ontap.Volume) float64 {
 	f := 1.0
 	for _, name := range v.Aggregates {
-		if a := inv.Aggregate(name); a != nil && a.PhysicalUsed > 0 {
+		a := inv.Aggregate(name)
+		if a == nil {
+			continue
+		}
+		r := a.RatioNoSnap
+		if r <= 0 {
+			r = a.Ratio
+		}
+		var lg, ph int64
+		for i := range inv.Volumes {
+			w := &inv.Volumes[i]
+			if w.Root || w.Type != "rw" || !slices.Contains(w.Aggregates, name) {
+				continue
+			}
+			l, p := activeData(w)
+			lg, ph = lg+l, ph+p
+		}
+		switch {
+		case r > 0 && lg > 0 && ph > 0:
+			f = max(f, r/(float64(lg)/float64(ph)))
+		case a.PhysicalUsed > 0:
 			f = max(f, 1+float64(a.CompactionSaved)/float64(a.PhysicalUsed))
 		}
 	}
@@ -539,7 +562,7 @@ func arrayNotes(sz *Sizing, add func(string, ...any)) {
 		return
 	}
 	if r.Datastores > 0 {
-		msg := fmt.Sprintf("ONTAP reduces the data of %d of %d shared datastore(s) %.1f:1 today (%.1f:1 from volume deduplication and compression, the rest from compaction), without Snapshot copies.",
+		msg := fmt.Sprintf("ONTAP reduces the data of %d of %d shared datastore(s) %.1f:1 today (%.1f:1 from volume deduplication and compression, the rest from aggregate savings such as compaction and cross-volume deduplication), without Snapshot copies.",
 			r.Datastores, r.Of, r.Ratio(), r.VolumeRatio())
 		if r.PlanPhysical > 0 {
 			msg += fmt.Sprintf(" With the same reduction, the planned usable capacity of %s needs about %s of physical capacity.", Human(st.Plan), Human(r.PlanPhysical))
@@ -561,7 +584,9 @@ func arrayNotes(sz *Sizing, add func(string, ...any)) {
 		if a.CPU >= 50 {
 			add("%s controllers reach %.0f%% CPU at p%.0f (%s, peak %.0f%%). With an HA partner down, one node carries both: keep the new controllers below 50%% each.", a.Name, a.CPU, sz.Percentile, a.CPUNode, a.CPUPeak)
 		}
-		if a.Inactive > 0 && a.Physical > 0 && float64(a.Inactive)/float64(a.Physical) > 0.2 {
+		// Above 90% the figure is not meaningful: ONTAP 9.12 reports more
+		// inactive data than is written when the scan counts differently.
+		if share := float64(a.Inactive) / max(float64(a.Physical), 1); share > 0.2 && share <= 0.9 {
 			add("%s reports %s of inactive data (%.0f%% of what is written): a capacity tier or cheaper media could hold it.", a.Name, Human(a.Inactive), float64(a.Inactive)/float64(a.Physical)*100)
 		}
 		if a.Preview {

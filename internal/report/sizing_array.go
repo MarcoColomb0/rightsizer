@@ -27,13 +27,13 @@ func (s *sizingDoc) arrays() {
 	}
 	s.h2("Measured on NetApp ONTAP")
 	s.para("rightsizer read the ONTAP clusters behind the datastores: how much their data shrinks today, the Snapshot copies vSphere does not see, and how busy the controllers are. " +
-		"Data reduction is the active data before savings divided by what it occupies after volume deduplication and compression and aggregate compaction; Snapshot copies are left out.")
+		"Data reduction is the active data before savings divided by what it occupies after volume deduplication and compression and the aggregate's own savings; Snapshot copies are left out.")
 	if r.Datastores > 0 {
 		rows := [][]string{
 			{"Datastores on ONTAP", fmt.Sprintf("%d of %d", r.Datastores, r.Of), fmt.Sprintf("%.0f%% of the shared datastores' used capacity", r.Coverage()*100)},
 			{"Active data before savings", tb(r.Logical), "As written by the hosts, in the matched volumes"},
 			{"After volume savings", tb(r.Physical), "Deduplication and compression: " + reduction(r.VolumeRatio())},
-			{"Data reduction", reduction(r.Ratio()), "Including aggregate compaction"},
+			{"Data reduction", reduction(r.Ratio()), "Including aggregate savings: compaction, cross-volume deduplication"},
 			{"Array Snapshot copies", tb(r.Snapshots), "Not seen by vSphere, not in raw used"},
 			{"Planned usable", tb(st.Plan), "From raw used, as above"},
 			{"Planned physical", tb(r.PlanPhysical), "Planned usable at the measured reduction"},
