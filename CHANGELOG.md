@@ -12,6 +12,8 @@ Notable changes to rightsizer. Each section becomes the notes of its GitHub rele
 ### Changed
 
 - Pre-releases such as v1.4.0-rc.1 are published as GitHub pre-releases: installs, upgrades and update prompts keep the latest full release, and `install.sh --tag` installs a pre-release by name. An installed pre-release is offered its final release.
+- Update VMware govmomi to v0.56.2
+- Update Charm bubbletea to v2.1.1
 
 ## v1.3.1 - 2026-10-25
 
