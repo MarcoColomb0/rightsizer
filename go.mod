@@ -7,7 +7,7 @@ toolchain go1.27.3
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	charm.land/ssh v0.4.3
 	charm.land/wish/v2 v2.0.5
 	codeberg.org/go-pdf/fpdf v0.12.0
