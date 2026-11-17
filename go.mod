@@ -2,20 +2,20 @@ module github.com/MarcoColomb0/rightsizer
 
 go 1.26.8
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.1
 	charm.land/ssh v0.4.3
 	charm.land/wish/v2 v2.0.5
 	codeberg.org/go-pdf/fpdf v0.12.0
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/vmware/govmomi v0.56.2
-	golang.org/x/crypto v0.58.0
-	golang.org/x/image v0.47.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/image v0.48.0
 )
 
 require (
@@ -44,6 +44,6 @@ require (
 	github.com/xo/terminfo v1.2.0 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
