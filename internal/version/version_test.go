@@ -55,3 +55,9 @@ func TestNewerAny(t *testing.T) {
 		t.Fatal("pre-release detection")
 	}
 }
+
+func TestDiagnostics(t *testing.T) {
+	if !Diagnostics("v1.4.0-rc.1") || Diagnostics("v1.4.0") || Diagnostics("dev") || Diagnostics("v1.3.0-4-gabcdef") {
+		t.Fatal("diagnostic bundles are for pre-releases only")
+	}
+}

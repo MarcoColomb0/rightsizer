@@ -17,11 +17,13 @@ import (
 	"github.com/MarcoColomb0/rightsizer/internal/atomicfile"
 
 	"github.com/MarcoColomb0/rightsizer/internal/analysis"
+	"github.com/MarcoColomb0/rightsizer/internal/ontap"
 	"github.com/MarcoColomb0/rightsizer/internal/report"
 	"github.com/MarcoColomb0/rightsizer/internal/vc"
 )
 
-// Source is one vCenter being analysed.
+// Source is one vCenter being analysed, or one ONTAP cluster collected for
+// the sizing of the vCenters it serves.
 type Source struct {
 	id  string
 	dir string
@@ -30,6 +32,7 @@ type Source struct {
 	mu     sync.Mutex
 	st     state
 	client *vc.Client
+	array  *ontap.Client
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -37,6 +40,13 @@ type Source struct {
 	lastErr            string
 	authFails          int
 	result             *analysis.Result
+	summary            *analysis.ArraySizing
+}
+
+// session is a connection to a vCenter or an ONTAP cluster.
+type session interface {
+	About() string
+	Close(ctx context.Context)
 }
 
 func (s *Source) status(full bool) Status {
@@ -52,6 +62,16 @@ func (s *Source) status(full bool) Status {
 	}
 	if s.st.Store != nil {
 		st.Polls = s.st.Store.Polls
+	}
+	if s.st.ArrayRT != nil {
+		st.Polls = s.st.ArrayRT.Polls
+	}
+	if a := s.summary; a != nil {
+		x := *a
+		if !full {
+			x.Aggregates, x.IO.Points = nil, nil
+		}
+		st.Array = &x
 	}
 	if s.result != nil {
 		t := s.result.Totals
@@ -73,27 +93,53 @@ func (s *Source) status(full bool) Status {
 	return st
 }
 
-func (s *Source) connect(ctx context.Context, password string) (*vc.Client, error) {
+func (s *Source) connect(ctx context.Context, password string) (session, error) {
 	s.mu.Lock()
 	cfg := s.st.Config
 	s.mu.Unlock()
-	return vc.Connect(ctx, vc.Credentials{Host: cfg.Host, User: cfg.User, Password: password, Fingerprint: cfg.Fingerprint})
+	if cfg.IsONTAP() {
+		cl, err := ontap.Connect(ctx, ontap.Credentials{Host: cfg.Host, User: cfg.User, Password: password, Fingerprint: cfg.Fingerprint})
+		if err != nil {
+			return nil, err
+		}
+		return cl, nil
+	}
+	cl, err := vc.Connect(ctx, vc.Credentials{Host: cfg.Host, User: cfg.User, Password: password, Fingerprint: cfg.Fingerprint})
+	if err != nil {
+		return nil, err
+	}
+	return cl, nil
 }
 
-func (s *Source) begin(cl *vc.Client) {
+// attach keeps the connection for collection; s.mu must be held.
+func (s *Source) attach(cl session) {
+	switch c := cl.(type) {
+	case *vc.Client:
+		s.client = c
+	case *ontap.Client:
+		s.array = c
+	}
+}
+
+func (s *Source) begin(cl session) {
 	now := time.Now()
 	s.mu.Lock()
 	s.st.Phase, s.st.Started, s.st.Ends = Running, now, now.Add(s.st.Config.Duration)
-	s.st.About, s.st.Store = cl.About(), analysis.NewStore(now)
-	s.client = cl
+	s.st.About = cl.About()
+	if s.st.Config.IsONTAP() {
+		s.st.ArrayRT, s.st.ArrayHistory = analysis.NewArrayStore(), analysis.NewArrayStore()
+	} else {
+		s.st.Store = analysis.NewStore(now)
+	}
+	s.attach(cl)
 	_ = s.save()
 	s.mu.Unlock()
 	s.run()
 }
 
-func (s *Source) resume(cl *vc.Client) {
+func (s *Source) resume(cl session) {
 	s.mu.Lock()
-	s.client = cl
+	s.attach(cl)
 	s.st.Phase = Running
 	s.lastErr, s.authFails = "", 0
 	s.mu.Unlock()
@@ -131,7 +177,7 @@ func (s *Source) extend(extra time.Duration) error {
 // reopen restarts collection on a finished analysis until extra from now.
 // Every sample collected so far is kept; the time since it finished is
 // not collected.
-func (s *Source) reopen(cl *vc.Client, extra time.Duration) error {
+func (s *Source) reopen(cl session, extra time.Duration) error {
 	now := time.Now()
 	s.mu.Lock()
 	if s.st.Phase != Done {
@@ -142,7 +188,7 @@ func (s *Source) reopen(cl *vc.Client, extra time.Duration) error {
 	s.st.Ends = now.Add(extra)
 	s.st.Config.Duration = s.st.Ends.Sub(s.st.Started)
 	s.st.Finished = time.Time{}
-	s.client = cl
+	s.attach(cl)
 	s.lastErr, s.authFails = "", 0
 	err := s.save()
 	s.mu.Unlock()
@@ -161,7 +207,12 @@ func (s *Source) run() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.cancel = cancel
+	array := s.st.Config.IsONTAP()
 	s.mu.Unlock()
+	if array {
+		s.wg.Go(func() { s.arrayLoop(ctx) })
+		return
+	}
 	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
@@ -381,13 +432,16 @@ func (s *Source) stop() {
 	}
 	s.wg.Wait()
 	s.mu.Lock()
-	cl := s.client
-	s.client = nil
+	cl, arr := s.client, s.array
+	s.client, s.array = nil, nil
 	s.mu.Unlock()
+	ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
+	defer c()
 	if cl != nil {
-		ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
 		cl.Close(ctx)
-		c()
+	}
+	if arr != nil {
+		arr.Close(ctx)
 	}
 }
 
@@ -445,7 +499,7 @@ func (s *Source) fail(err error) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastErr = fmt.Sprintf("%s: %v", time.Now().Format("Jan 02 15:04"), err)
-	if !vc.IsAuthError(err) {
+	if !vc.IsAuthError(err) && !ontap.IsAuthError(err) {
 		return false
 	}
 	s.authFails++
@@ -593,7 +647,7 @@ func (s *Source) refreshResult() {
 	s.result = r
 }
 
-func (s *Source) sizing(p analysis.SizingParams) *analysis.Sizing {
+func (s *Source) sizing(p analysis.SizingParams, arrays []analysis.ArrayInput) *analysis.Sizing {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.st.Inventory == nil {
@@ -609,7 +663,7 @@ func (s *Source) sizing(p analysis.SizingParams) *analysis.Sizing {
 			Profile: analysis.ProfileByName(s.st.Config.Profile),
 			Start:   s.st.Started, End: end, Planned: s.st.Config.Duration,
 		},
-		Result: s.result, Estate: s.st.Estate, Params: p,
+		Result: s.result, Estate: s.st.Estate, Params: p, Arrays: arrays,
 	})
 	sz.VCenter = fmt.Sprintf("%s — %s", s.st.Config.Host, s.st.About)
 	sz.Final = s.st.Phase == Done
@@ -640,7 +694,10 @@ func writePDF(dir string, res *analysis.Result) (string, error) {
 func (s *Source) statePath() string { return filepath.Join(s.dir, "state.gob") }
 
 func (s *Source) save() error {
-	s.st.Version = stateVersion
+	s.st.Version = vcenterFormat
+	if s.st.Config.IsONTAP() {
+		s.st.Version = stateVersion
+	}
 	return writeState(s.statePath(), &s.st)
 }
 

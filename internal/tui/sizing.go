@@ -296,6 +296,7 @@ func (m Model) sizingView() string {
 	fmt.Fprintf(&b, "  Plan %s usable  %s\n", t.acc.Bold(true).Render(analysis.Human(st.Plan)),
 		t.mute.Render(fmt.Sprintf("+%s%% growth, %s%% free · provisioned %s", fmtNum(p.Growth), fmtNum(p.FreeSpace), analysis.Human(st.Provisioned))))
 	b.WriteString(t.faint.Render(fmt.Sprintf("  Not included: swap %s, orphaned disks %s", analysis.Human(st.Swap), analysis.Human(st.Orphans))) + "\n")
+	m.arraySizing(&b, st, sz.Percentile)
 	var types []string
 	for _, u := range st.ByType {
 		types = append(types, fmt.Sprintf("%s %s %s", u.Type, u.Protocol, analysis.Human(u.Used)))

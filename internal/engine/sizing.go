@@ -85,10 +85,11 @@ func (e *Engine) Sizing(id string) (*analysis.Sizing, error) {
 
 func (e *Engine) buildSizing(id string) (*analysis.Sizing, string, error) {
 	p := e.SizingParams()
+	arrays := e.arrayInputs()
 	if id == "" {
 		var ss []*analysis.Sizing
 		for _, s := range e.list() {
-			if sz := s.sizing(p); sz != nil {
+			if sz := s.sizing(p, arrays); sz != nil {
 				ss = append(ss, sz)
 			}
 		}
@@ -101,7 +102,10 @@ func (e *Engine) buildSizing(id string) (*analysis.Sizing, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	sz := s.sizing(p)
+	if s.status(false).Config.IsONTAP() {
+		return nil, "", errArrayReport
+	}
+	sz := s.sizing(p, arrays)
 	if sz == nil {
 		return nil, "", errors.New("inventory not loaded yet")
 	}

@@ -2,6 +2,26 @@
 
 Notable changes to rightsizer. Each section becomes the notes of its GitHub release and is shown in the console's update prompt. Add new entries under **Unreleased**; when tagging, rename it to the version and date. Earlier releases are listed on the [releases page](https://github.com/MarcoColomb0/rightsizer/releases).
 
+## Unreleased
+
+### Added
+
+- NetApp ONTAP clusters (9.10 or later) can be added as sources with a `readonly` user. Their volumes and LUNs are matched to the datastores of every vCenter, and the sizing shows the data reduction measured today, the physical capacity the planned storage needs at that reduction, array Snapshot copies, data in other volumes, and the controllers' load. The sizing PDF has a new ONTAP section and the CSV data adds `ontap-clusters.csv`, `ontap-aggregates.csv` and the ONTAP volume of each datastore.
+- Datastores on NetApp LUNs are flagged in the sizing when their ONTAP cluster has not been added.
+
+### Changed
+
+- Pre-releases such as v1.4.0-rc.1 are published as GitHub pre-releases: installs, upgrades and update prompts keep the latest full release, and `install.sh --tag` installs a pre-release by name. An installed pre-release is offered its final release.
+- Update VMware govmomi to v0.56.2
+- Update Charm bubbletea to v2.1.1
+- Update Charm lipgloss to v2.1.1
+- Update Flatcar LTS to v4081.3.12
+- Update golang.org/x/crypto to v0.59.0 and golang.org/x/image to v0.48.0
+
+### Fixed
+
+- Built with Go 1.27.4, which fixes [CVE-2026-97054](https://nvd.nist.gov/vuln/detail/CVE-2026-97054) in Go's HTTP server.
+
 ## v1.3.1 - 2026-10-25
 
 ### Added

@@ -27,6 +27,10 @@ func NewerAny(latest, current string) bool {
 	return ok1 && ok2 && compare(l, c) > 0
 }
 
+// Diagnostics reports whether a version offers diagnostic bundles: only
+// pre-releases, which are built to be tested and reported on.
+func Diagnostics(v string) bool { return IsPre(v) }
+
 // IsPre reports a pre-release version such as v1.4.0-rc.1.
 func IsPre(v string) bool {
 	p, ok := parse(v)
@@ -49,7 +53,7 @@ func (p parsed) pre() bool { return p.kind < 3 }
 
 // preSuffix is a release candidate, beta or alpha such as -rc.1; other
 // suffixes, like git describe's -12-gabcdef, are development builds. Same
-// rule as install.sh and the appliance host.
+// rule as .github/tag-kind.sh, install.sh and the appliance host.
 var preSuffix = regexp.MustCompile(`^(alpha|beta|rc)\.?([0-9]*)$`)
 
 func parse(v string) (parsed, bool) {

@@ -83,7 +83,7 @@ func Render(version, dataDir string, src Source) string {
 		for _, x := range s.Sources {
 			n[x.Phase]++
 		}
-		line("Engine", fmt.Sprintf("running · %d vCenter sources", len(s.Sources)))
+		line("Engine", fmt.Sprintf("running · %d sources", len(s.Sources)))
 		if len(s.Sources) > 0 {
 			line("", fmt.Sprintf("%d collecting · %d paused · %d complete", n[engine.Running], n[engine.NeedPassword], n[engine.Done]))
 		}
