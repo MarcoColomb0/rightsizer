@@ -24,9 +24,13 @@ rightsizer watches your VMware vCenters for 24 hours to 14 days, compares what e
 
 ## Showcase
 
-**Every vCenter on one screen**
+**Every vCenter and ONTAP cluster on one screen**
 
-![Every vCenter on one screen](docs/images/home.png)
+![Every vCenter and ONTAP cluster on one screen](docs/images/home.png)
+
+**NetApp ONTAP data reduction and load**
+
+![NetApp ONTAP data reduction and load](docs/images/ontap.png)
 
 **Totals, clusters and CPU trends**
 
