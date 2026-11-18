@@ -2,7 +2,7 @@
 
 Notable changes to rightsizer. Each section becomes the notes of its GitHub release and is shown in the console's update prompt. Add new entries under **Unreleased**; when tagging, rename it to the version and date. Earlier releases are listed on the [releases page](https://github.com/MarcoColomb0/rightsizer/releases).
 
-## Unreleased
+## v1.4.0 - 2026-11-18
 
 ### Added
 

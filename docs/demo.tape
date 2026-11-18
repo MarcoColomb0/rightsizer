@@ -4,9 +4,9 @@
 #   brew install vhs        # or: go install github.com/charmbracelet/vhs@latest
 #   vhs docs/demo.tape
 #
-# The console runs on synthetic vCenters: a hidden step makes the
-# recorded "rightsizer" command run "./rightsizer demo", so nothing is
-# contacted.
+# The console runs on synthetic vCenters and an ONTAP cluster: a hidden
+# step rebuilds ./rightsizer and makes the recorded "rightsizer" command
+# run "./rightsizer demo", so nothing is contacted.
 
 Output docs/images/demo.gif
 
@@ -26,9 +26,9 @@ Set TypingSpeed 110ms
 Set Theme { "name": "Twilight", "background": "#13111E", "foreground": "#E9E8F7", "selection": "#3D0E61", "cursor": "#97DFFC", "cursorAccent": "#13111E", "black": "#1D1934", "red": "#F87171", "green": "#4ADE80", "yellow": "#FBBF24", "blue": "#8EB5F0", "magenta": "#858AE3", "cyan": "#97DFFC", "white": "#E9E8F7", "brightBlack": "#5D5791", "brightRed": "#FCA5A5", "brightGreen": "#86EFAC", "brightYellow": "#FDE68A", "brightBlue": "#93CAF6", "brightMagenta": "#A78BFA", "brightCyan": "#BAE6FD", "brightWhite": "#FFFFFF" }
 
 Hide
-Type "test -x ./rightsizer || make build >/dev/null; rightsizer() { ./rightsizer demo; }; clear"
+Type "make build >/dev/null; rightsizer() { ./rightsizer demo; }; clear"
 Enter
-Sleep 2s
+Wait@3m
 Show
 
 Sleep 1s
@@ -39,6 +39,12 @@ Sleep 4s
 Screenshot docs/images/home.png
 
 Down
+Sleep 1.5s
+Enter
+Sleep 4s
+Screenshot docs/images/ontap.png
+Sleep 1s
+Escape
 Sleep 1.2s
 Up
 Sleep 1.2s
@@ -67,13 +73,21 @@ Sleep 2s
 Type "4"
 Sleep 4s
 Screenshot docs/images/sizing.png
-Down@250ms 8
-Sleep 2.5s
+Down@250ms 11
+Sleep 3.5s
 
 Escape
 Sleep 2s
 Type "a"
 Sleep 1.5s
+Up
+Sleep 600ms
+Right
+Sleep 2s
+Left
+Sleep 1s
+Down
+Sleep 600ms
 Type "vcsa03.corp.local"
 Sleep 700ms
 Tab
